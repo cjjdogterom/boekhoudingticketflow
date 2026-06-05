@@ -33,8 +33,14 @@ export default async function SettingsPage() {
 
       <Card title="📥 TicketFlow synchronisatie">
         <p style={{ fontSize: 13, color: UI.textMuted, marginBottom: 10 }}>
-          Importeert <strong>uitbetalingen</strong> en <strong>facturen</strong> van TicketFlow voor de organisatie
-          gekoppeld aan <code style={code}>dogteromc03@gmail.com</code>. Dupliacten worden overgeslagen.
+          Importeert <strong>facturen</strong> die TicketFlow naar organisatoren stuurt als
+          <strong> jouw omzet</strong> (categorie &ldquo;Omzet servicekosten&rdquo;). Open facturen worden
+          gemarkeerd als &ldquo;te beoordelen&rdquo; tot je ze als ontvangen markeert.
+          Uitbetalingen aan organisatoren zijn doorlopende posten en worden niet geïmporteerd —
+          de €0,85 per ticket service fee zit al in de facturen.
+        </p>
+        <p style={{ fontSize: 12, color: UI.textFaint, marginBottom: 12 }}>
+          Account: <code style={code}>dogteromc03@gmail.com</code> · Duplicaten worden overgeslagen
         </p>
         {tfConfigured ? (
           <SyncButton />
