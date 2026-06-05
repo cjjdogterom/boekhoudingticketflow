@@ -1,5 +1,6 @@
-// TicketFlow data fetcher — reads from TicketFlow's Supabase for ALL orgs
-// (this account = the platform owner = dogteromc03@gmail.com).
+// TicketFlow data fetcher — reads from TicketFlow's Supabase for ALL orgs.
+// This account is the PLATFORM owner (dogteromc03@gmail.com), so we sync
+// everything across all organisations as the TicketFlow business.
 import { createClient } from '@supabase/supabase-js'
 
 let _client: ReturnType<typeof createClient> | null = null
@@ -13,46 +14,47 @@ function tfClient() {
   return _client
 }
 
-// Platform constants — match TicketFlow's lib/fees.ts
-export const SERVICE_FEE_CENTS = 85    // €0,85 per ticket (TicketFlow inkomst)
-export const MOLLIE_COST_CENTS = 32    // €0,32 per ticket (Mollie kost TicketFlow eet)
-export const REFUND_FEE_CENTS = 50     // €0,50 per refund (TicketFlow inkomst)
+// Fallback constants — overridden by platform_settings if present in TicketFlow.
+const DEFAULT_SERVICE_FEE_CENTS = 85
+const DEFAULT_MOLLIE_TRANSACTION_COST_CENTS = 29
+export const REFUND_FEE_CENTS = 50
 
-// ── Owner account check ────────────────────────────────────────────────────
-const OWNER_EMAIL = 'dogteromc03@gmail.com'
-
-export async function fetchOwnerOrgId(): Promise<string | null> {
+// ── Fee rates uit platform_settings ────────────────────────────────────────
+export async function fetchFeeRates(): Promise<{ serviceFee: number; mollieCost: number }> {
   const client = tfClient()
-  const { data, error } = await client
-    .from('organizations')
-    .select('id')
-    .eq('owner_email', OWNER_EMAIL)
-    .maybeSingle()
-  if (error) throw new Error(error.message)
-  return (data as { id: string } | null)?.id ?? null
+  const { data } = await client
+    .from('platform_settings')
+    .select('key, value')
+    .in('key', ['fee_platform_mollie', 'fee_mollie_transaction'])
+  const map: Record<string, number> = {}
+  for (const r of (data ?? []) as Array<{ key: string; value: string }>) {
+    map[r.key] = parseInt(r.value, 10)
+  }
+  return {
+    serviceFee: map['fee_platform_mollie'] ?? DEFAULT_SERVICE_FEE_CENTS,
+    mollieCost: map['fee_mollie_transaction'] ?? DEFAULT_MOLLIE_TRANSACTION_COST_CENTS,
+  }
 }
 
-// ── Tickets per organisator ────────────────────────────────────────────────
-// Voor de boekhouding van het PLATFORM tellen we alle paid tickets van ALLE
-// organisatoren — TicketFlow is het platform, niet zelf organisator.
+// ── Tickets per organisator (paid + refunded) ──────────────────────────────
 export interface TFTicketRow {
   id: string
   event_id: string
   org_id: string
   org_name: string
-  price_paid: number    // cents
+  price_paid: number
   status: string
   refunded_at: string | null
+  mollie_payment_id: string | null
   created_at: string
 }
 
 export async function fetchAllPaidTickets(): Promise<TFTicketRow[]> {
   const client = tfClient()
-  // events → organizations join for the org name
   const { data, error } = await client
     .from('tickets')
     .select(`
-      id, event_id, price_paid, status, refunded_at, created_at,
+      id, event_id, price_paid, status, refunded_at, mollie_payment_id, created_at,
       events!inner ( org_id, organizations!inner ( name ) )
     `)
     .eq('status', 'paid')
@@ -61,7 +63,7 @@ export async function fetchAllPaidTickets(): Promise<TFTicketRow[]> {
   if (error) throw new Error(`tickets fetch: ${error.message}`)
   type Row = {
     id: string; event_id: string; price_paid: number; status: string
-    refunded_at: string | null; created_at: string
+    refunded_at: string | null; mollie_payment_id: string | null; created_at: string
     events: { org_id: string; organizations: { name: string } }
   }
   const rows = (data ?? []) as unknown as Row[]
@@ -73,17 +75,12 @@ export async function fetchAllPaidTickets(): Promise<TFTicketRow[]> {
     price_paid: r.price_paid,
     status: r.status,
     refunded_at: r.refunded_at,
+    mollie_payment_id: r.mollie_payment_id,
     created_at: r.created_at,
   }))
 }
 
-// ── Refunded tickets (€0,50 fee elk) ───────────────────────────────────────
-export async function fetchRefundedTickets(): Promise<TFTicketRow[]> {
-  const all = await fetchAllPaidTickets()
-  return all.filter(t => t.refunded_at !== null)
-}
-
-// ── Payouts per organisator ────────────────────────────────────────────────
+// ── Payouts ────────────────────────────────────────────────────────────────
 export interface TFPayout {
   id: string
   org_id: string
@@ -103,7 +100,7 @@ export async function fetchAllPayouts(): Promise<TFPayout[]> {
   return (data ?? []) as unknown as TFPayout[]
 }
 
-// ── Invoices (alleen voor maatwerksites + refunds) ─────────────────────────
+// ── Invoices (maatwerk + refund + broadcast facturen) ──────────────────────
 export interface TFInvoice {
   id: string
   invoice_number: string | null
@@ -130,29 +127,40 @@ export async function fetchAllInvoices(): Promise<TFInvoice[]> {
   return (data ?? []) as unknown as TFInvoice[]
 }
 
-// ── Aggregated per-organisation snapshot ───────────────────────────────────
+// ── Aggregaat per organisator ──────────────────────────────────────────────
 export interface OrgSnapshot {
   org_id: string
   org_name: string
   tickets_sold: number
+  unique_orders: number        // unieke mollie_payment_id's (voor Mollie kosten)
   refunds: number
-  gross_revenue: number       // som van price_paid
-  service_fees: number        // tickets × 0,85
-  mollie_costs: number        // tickets × 0,32
-  refund_fees: number         // refunds × 0,50
-  payouts_total: number       // som van payouts.amount (status=paid)
-  payable: number             // gross_revenue − service_fees − mollie_costs − refund_fees − payouts_total
+  gross_revenue: number
+  service_fees: number
+  mollie_costs: number          // per ORDER, niet per ticket
+  refund_fees: number
+  payouts_total: number
+  payable: number
 }
 
-export async function buildOrgSnapshots(): Promise<OrgSnapshot[]> {
-  const [tickets, payouts] = await Promise.all([fetchAllPaidTickets(), fetchAllPayouts()])
-  const map: Record<string, OrgSnapshot> = {}
+export async function buildOrgSnapshots(): Promise<{
+  snapshots: OrgSnapshot[]
+  rates: { serviceFee: number; mollieCost: number }
+}> {
+  const [tickets, payouts, rates] = await Promise.all([
+    fetchAllPaidTickets(),
+    fetchAllPayouts(),
+    fetchFeeRates(),
+  ])
+
+  const map: Record<string, OrgSnapshot & { orderIds: Set<string> }> = {}
+
   for (const t of tickets) {
     if (!map[t.org_id]) {
       map[t.org_id] = {
         org_id: t.org_id,
         org_name: t.org_name,
         tickets_sold: 0,
+        unique_orders: 0,
         refunds: 0,
         gross_revenue: 0,
         service_fees: 0,
@@ -160,16 +168,22 @@ export async function buildOrgSnapshots(): Promise<OrgSnapshot[]> {
         refund_fees: 0,
         payouts_total: 0,
         payable: 0,
+        orderIds: new Set<string>(),
       }
     }
-    map[t.org_id].tickets_sold++
-    map[t.org_id].gross_revenue += t.price_paid
-    map[t.org_id].service_fees += SERVICE_FEE_CENTS
-    map[t.org_id].mollie_costs += MOLLIE_COST_CENTS
+    const m = map[t.org_id]
+    m.tickets_sold++
+    m.gross_revenue += t.price_paid
+    m.service_fees += rates.serviceFee
+    if (t.mollie_payment_id) m.orderIds.add(t.mollie_payment_id)
     if (t.refunded_at) {
-      map[t.org_id].refunds++
-      map[t.org_id].refund_fees += REFUND_FEE_CENTS
+      m.refunds++
+      m.refund_fees += REFUND_FEE_CENTS
     }
+  }
+  for (const m of Object.values(map)) {
+    m.unique_orders = m.orderIds.size
+    m.mollie_costs = m.unique_orders * rates.mollieCost
   }
   for (const p of payouts) {
     if (p.status !== 'paid') continue
@@ -178,8 +192,9 @@ export async function buildOrgSnapshots(): Promise<OrgSnapshot[]> {
   }
   for (const k in map) {
     const s = map[k]
-    // Wat we de organisator nog schuldig zijn = bruto omzet − onze fees − Mollie kosten − refund fees − al uitbetaald
     s.payable = s.gross_revenue - s.service_fees - s.mollie_costs - s.refund_fees - s.payouts_total
   }
-  return Object.values(map).sort((a, b) => b.tickets_sold - a.tickets_sold)
+  const snapshots = Object.values(map).map(({ orderIds: _o, ...rest }) => rest)
+  snapshots.sort((a, b) => b.tickets_sold - a.tickets_sold)
+  return { snapshots, rates }
 }

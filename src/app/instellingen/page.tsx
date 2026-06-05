@@ -37,11 +37,19 @@ export default async function SettingsPage() {
         </p>
         <ul style={{ fontSize: 13, color: UI.text, paddingLeft: 22, lineHeight: 1.8, marginBottom: 10 }}>
           <li><strong>+ €0,85 per verkocht ticket</strong> → Omzet servicekosten</li>
-          <li><strong>− €0,32 per verkocht ticket</strong> → Bankkosten (Mollie)</li>
+          <li><strong>− €0,29 per unieke Mollie order</strong> (niet per ticket!) → Bankkosten</li>
           <li><strong>+ €0,50 per terugbetaalde ticket</strong> → Omzet servicekosten</li>
-          <li><strong>Facturen</strong> (maatwerksites + refund-facturen) → Omzet overig</li>
-          <li><strong>Mollie saldo + verplichting aan organisatoren</strong> → balans-snapshot</li>
+          <li><strong>Facturen</strong> (maatwerksites, refund-facturen, broadcast-facturen):
+            <ul style={{ paddingLeft: 18, marginTop: 4 }}>
+              <li>Open → omzet + <strong>debiteur</strong> op balans</li>
+              <li>Betaald → omzet</li>
+            </ul>
+          </li>
+          <li><strong>Mollie saldo + verplichting aan organisatoren</strong> → balans</li>
         </ul>
+        <p style={{ fontSize: 11, color: UI.textFaint, marginBottom: 8 }}>
+          Tarieven worden opgehaald uit TicketFlow platform_settings. Bedragen kunnen daar aangepast worden.
+        </p>
         <p style={{ fontSize: 12, color: UI.textFaint, marginBottom: 12 }}>
           Account: <code style={code}>dogteromc03@gmail.com</code> · Idempotent (dupliacten overgeslagen)
         </p>
