@@ -36,16 +36,13 @@ export default async function SettingsPage() {
           Importeert per organisator geaggregeerd, op moment van ticket-aankoop:
         </p>
         <ul style={{ fontSize: 13, color: UI.text, paddingLeft: 22, lineHeight: 1.8, marginBottom: 10 }}>
-          <li><strong>+ €0,85 per verkocht ticket</strong> → Omzet servicekosten</li>
-          <li><strong>− €0,29 per unieke Mollie order</strong> (niet per ticket!) → Bankkosten</li>
-          <li><strong>+ €0,50 per terugbetaalde ticket</strong> → Omzet servicekosten</li>
-          <li><strong>Facturen</strong> (maatwerksites, refund-facturen, broadcast-facturen):
-            <ul style={{ paddingLeft: 18, marginTop: 4 }}>
-              <li>Open → omzet + <strong>debiteur</strong> op balans</li>
-              <li>Betaald → omzet</li>
-            </ul>
-          </li>
-          <li><strong>Mollie saldo + verplichting aan organisatoren</strong> → balans</li>
+          <li><strong>+ €0,85 per verkocht ticket</strong> → Omzet servicekosten op W&amp;V</li>
+          <li><strong>+ €0,50 per terugbetaalde ticket</strong> → Omzet servicekosten op W&amp;V</li>
+          <li><strong>Betaalde facturen</strong> (maatwerk + broadcasts + refunds) → Omzet overig op W&amp;V</li>
+          <li><strong>Open facturen</strong> → alleen als <strong>Debiteur</strong> op balans, niet op W&amp;V</li>
+          <li><strong>Mollie kosten (€0,29 per order)</strong> → niet op W&amp;V; al door Mollie verrekend; wel in Mollie saldo berekening</li>
+          <li><strong>Mollie saldo</strong> = bruto − Mollie kosten − uitbetalingen</li>
+          <li><strong>Verplichting aan organisatoren</strong> → balans</li>
         </ul>
         <p style={{ fontSize: 11, color: UI.textFaint, marginBottom: 8 }}>
           Tarieven worden opgehaald uit TicketFlow platform_settings. Bedragen kunnen daar aangepast worden.

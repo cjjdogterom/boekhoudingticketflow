@@ -5,24 +5,22 @@ import { buildOrgSnapshots, fetchAllInvoices } from '@/lib/ticketflow'
 
 export const runtime = 'nodejs'
 
-// Sync-model — boekhoudkundig correct voor TicketFlow platform:
+// Sync-model voor TicketFlow platform — boekhoudkundig schoon:
 //
-// INKOMSTEN (op moment van ticket-verkoop):
-//   - Service fee: €0,85 per VERKOCHT TICKET → Omzet servicekosten (21% BTW)
-//   - Refund fee:  €0,50 per TERUGBETAALD TICKET → Omzet servicekosten
-//   - Facturen (maatwerksites, refund-facturen, broadcast-facturen):
-//       Open factuur  → omzet + debiteur
-//       Betaalde fact → omzet (geld is binnen)
+// W&V (winst en verlies) — alleen werkelijke inkomsten:
+//   ✓ Service fee €0,85 per ticket → Omzet servicekosten
+//   ✓ Refund fee €0,50 per refund → Omzet servicekosten
+//   ✓ BETAALDE facturen (maatwerk + broadcasts + refunds) → Omzet overig
+//   ✗ Mollie kosten worden NIET geboekt (al door Mollie verrekend op het
+//     Mollie-account vóór jij het geld ziet — geen apart in/uit van jouw kas)
+//   ✗ Open facturen NIET als omzet — alleen op balans als debiteur
 //
-// UITGAVEN (op moment van ticket-verkoop):
-//   - Mollie kost: €0,29 per UNIEKE MOLLIE ORDER (niet per ticket!)
-//     → Bankkosten & transactiekosten (0% BTW)
-//
-// BALANS:
-//   - Activa: Saldo Mollie (bruto - uitbetaald), Debiteuren (open facturen)
-//   - Passiva: Verplichting aan organisatoren
-//
-// Bedragen komen uit TicketFlow platform_settings (fallback hardcoded).
+// Balans:
+//   Activa:
+//     Saldo Mollie = bruto tickets − Mollie kosten − uitbetalingen
+//     Debiteuren = som open facturen
+//   Passiva:
+//     Verplichting aan organisatoren = bruto − service fees − Mollie − refunds − uitbetaald
 
 export async function POST() {
   const session = await getSession()
@@ -35,7 +33,6 @@ export async function POST() {
 
     const today = new Date().toISOString().slice(0, 10)
     let feesAdded = 0
-    let mollieAdded = 0
     let refundAdded = 0
     let invoicesAdded = 0
 
@@ -47,7 +44,7 @@ export async function POST() {
     }
 
     for (const s of snapshots) {
-      // ── Service fees per verkochte ticket ──────────────────────────────
+      // ── Service fees per verkochte ticket (omzet) ──────────────────────
       if (s.tickets_sold > 0) {
         const key = `fees-${s.org_id}-${s.tickets_sold}`
         if (!synced.has(key)) {
@@ -59,7 +56,7 @@ export async function POST() {
                     values (?, ?, ?, ?, 'income', 21, 'cat-omzet-fees', 'ticketflow', ?, 0, 0, ?)`,
               args: [txId, today, `Servicekosten ${s.org_name} — ${delta} ticket${delta === 1 ? '' : 's'}`,
                 delta * rates.serviceFee, key,
-                `Org: ${s.org_name} · ${delta} tickets × €${(rates.serviceFee / 100).toFixed(2)}`],
+                `Org: ${s.org_name} · ${delta} tickets × €${(rates.serviceFee / 100).toFixed(2)} servicekosten`],
             })
             await db.execute({ sql: `insert into ticketflow_sync (external_id, kind, transaction_id) values (?, 'service-fee', ?)`, args: [key, txId] })
             feesAdded++
@@ -67,27 +64,7 @@ export async function POST() {
         }
       }
 
-      // ── Mollie transactiekosten per UNIEKE ORDER (niet per ticket) ─────
-      if (s.unique_orders > 0) {
-        const key = `mollie-${s.org_id}-${s.unique_orders}`
-        if (!synced.has(key)) {
-          const delta = s.unique_orders - previousCount(`mollie-${s.org_id}-`)
-          if (delta > 0) {
-            const txId = newId()
-            await db.execute({
-              sql: `insert into transactions (id, date, description, amount_cents, type, vat_rate, category_id, source, external_id, ai_categorised, needs_review, notes)
-                    values (?, ?, ?, ?, 'expense', 0, 'cat-bank', 'ticketflow', ?, 0, 0, ?)`,
-              args: [txId, today, `Mollie transactiekosten ${s.org_name} — ${delta} order${delta === 1 ? '' : 's'}`,
-                delta * rates.mollieCost, key,
-                `Org: ${s.org_name} · ${delta} orders × €${(rates.mollieCost / 100).toFixed(2)}`],
-            })
-            await db.execute({ sql: `insert into ticketflow_sync (external_id, kind, transaction_id) values (?, 'mollie-cost', ?)`, args: [key, txId] })
-            mollieAdded++
-          }
-        }
-      }
-
-      // ── Refund fees ────────────────────────────────────────────────────
+      // ── Refund fees (omzet) ────────────────────────────────────────────
       if (s.refunds > 0) {
         const key = `refund-${s.org_id}-${s.refunds}`
         if (!synced.has(key)) {
@@ -107,19 +84,21 @@ export async function POST() {
       }
     }
 
-    // ── Facturen: open = debiteur, paid = omzet (al geboekt) ─────────────
+    // ── Facturen: ALLEEN betaalde facturen op W&V als omzet ──────────────
+    // Open facturen worden NIET als income transactie geboekt — die staan
+    // alleen op de balans als Debiteuren. Bij volgende sync, als status
+    // verandert naar paid, dan WEL een transactie aanmaken.
     const invoices = await fetchAllInvoices()
     for (const inv of invoices) {
-      const extId = `invoice-${inv.id}`
+      const isPaid = inv.status === 'paid'
+      const extId = isPaid ? `invoice-paid-${inv.id}` : null   // open facturen: geen tx maken
+      if (!extId) continue
       if (synced.has(extId)) continue
       const amount = Number(inv.amount || 0)
       if (amount <= 0) continue
 
       const date = inv.created_at.slice(0, 10)
-      const isPaid = inv.status === 'paid'
-      const statusLabel = isPaid ? '✓ Betaald' : '⏳ Openstaand (debiteur)'
       const noteParts = [
-        `Status: ${inv.status}`,
         inv.period_label ? `Periode: ${inv.period_label}` : null,
         inv.org_name ? `Klant: ${inv.org_name}` : null,
         inv.notes,
@@ -128,18 +107,27 @@ export async function POST() {
       const txId = newId()
       await db.execute({
         sql: `insert into transactions (id, date, description, amount_cents, type, vat_rate, category_id, source, external_id, ai_categorised, needs_review, notes)
-              values (?, ?, ?, ?, 'income', 21, 'cat-omzet-overig', 'ticketflow', ?, 0, ?, ?)`,
-        args: [txId, date, `Factuur ${inv.invoice_number || inv.id.slice(0, 8)} — ${statusLabel}`,
-          amount, extId, isPaid ? 0 : 1, noteParts.join(' · ')],
+              values (?, ?, ?, ?, 'income', 21, 'cat-omzet-overig', 'ticketflow', ?, 0, 0, ?)`,
+        args: [txId, date, `Factuur ${inv.invoice_number || inv.id.slice(0, 8)} — ✓ Betaald`,
+          amount, extId, noteParts.join(' · ')],
       })
-      await db.execute({ sql: `insert into ticketflow_sync (external_id, kind, transaction_id) values (?, 'invoice', ?)`, args: [extId, txId] })
+      await db.execute({ sql: `insert into ticketflow_sync (external_id, kind, transaction_id) values (?, 'invoice-paid', ?)`, args: [extId, txId] })
       invoicesAdded++
     }
 
     // ── Balans-snapshot ────────────────────────────────────────────────────
+    // Mollie saldo = bruto tickets − Mollie kosten (al ingehouden) − uitbetalingen
+    const mollieBalance = snapshots.reduce(
+      (s, o) => s + o.gross_revenue - o.mollie_costs - o.payouts_total,
+      0,
+    )
+    // Verplichting aan organisatoren (al berekend in snapshot)
     const totalPayable = snapshots.reduce((s, o) => s + o.payable, 0)
-    const mollieBalance = snapshots.reduce((s, o) => s + o.gross_revenue - o.payouts_total, 0)
-    const totalDebtors = invoices.filter(i => i.status !== 'paid').reduce((s, i) => s + Number(i.amount || 0), 0)
+    // Debiteuren = open facturen
+    const totalDebtors = invoices
+      .filter(i => i.status !== 'paid')
+      .reduce((s, i) => s + Number(i.amount || 0), 0)
+
     await db.execute({
       sql: 'insert into payable_snapshot (id, total_cents, mollie_balance, org_count, debtors_cents) values (?, ?, ?, ?, ?)',
       args: [newId(), totalPayable, mollieBalance, snapshots.length, totalDebtors],
@@ -147,11 +135,11 @@ export async function POST() {
 
     return NextResponse.json({
       ok: true,
-      feesAdded, mollieAdded, refundAdded, invoicesAdded,
+      feesAdded, refundAdded, invoicesAdded,
       orgsProcessed: snapshots.length,
       totalPayable, mollieBalance, totalDebtors,
       rates,
-      message: `${feesAdded} servicekosten + ${mollieAdded} Mollie-kosten + ${refundAdded} refunds + ${invoicesAdded} facturen voor ${snapshots.length} organisator(en). Mollie saldo: €${(mollieBalance / 100).toFixed(2)} · Debiteuren: €${(totalDebtors / 100).toFixed(2)} · Verplichting aan orgs: €${(totalPayable / 100).toFixed(2)}`,
+      message: `${feesAdded} servicekosten + ${refundAdded} refunds + ${invoicesAdded} betaalde facturen voor ${snapshots.length} organisator(en). Mollie saldo: €${(mollieBalance / 100).toFixed(2)} · Debiteuren: €${(totalDebtors / 100).toFixed(2)} · Verplichting aan orgs: €${(totalPayable / 100).toFixed(2)}`,
     })
   } catch (err) {
     console.error('ticketflow sync failed', err)
