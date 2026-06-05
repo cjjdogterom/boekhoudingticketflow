@@ -3,6 +3,8 @@ import bcrypt from 'bcryptjs'
 import { selectOne } from '@/lib/db'
 import { signSession, setSessionCookie } from '@/lib/auth'
 
+export const runtime = 'nodejs'
+
 export async function POST(req: NextRequest) {
   const { email, password } = await req.json()
   if (!email || !password) return NextResponse.json({ error: 'E-mail en wachtwoord verplicht' }, { status: 400 })
