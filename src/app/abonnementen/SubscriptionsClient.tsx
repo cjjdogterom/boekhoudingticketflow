@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { UI, inputStyle, labelStyle, primaryButtonStyle, formatEuro, fontStack } from '@/lib/ui'
-import type { Subscription, Category } from '@/lib/supabase'
+import type { Subscription, Category } from '@/lib/db'
 
 interface Props {
   initialSubscriptions: Subscription[]

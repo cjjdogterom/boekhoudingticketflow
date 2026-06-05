@@ -6,11 +6,12 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "db:init": "node scripts/init-db.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.30.0",
-    "@supabase/supabase-js": "^2.45.0",
+    "@libsql/client": "^0.14.0",
     "@mollie/api-client": "^4.0.0",
     "bcryptjs": "^2.4.3",
     "jose": "^5.9.0",

@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { UI, inputStyle, labelStyle, primaryButtonStyle, formatEuro, fontStack } from '@/lib/ui'
-import type { Transaction, Category, Subscription } from '@/lib/supabase'
+import type { Transaction, Category, Subscription } from '@/lib/db'
 
 interface Props {
   initialTransactions: Transaction[]

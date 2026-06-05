@@ -1,6 +1,6 @@
 import { redirect } from 'next/navigation'
 import { getSession } from '@/lib/auth'
-import { supabaseAdmin } from '@/lib/supabase'
+import { selectAll, CAT_BOOL_FIELDS, type Category } from '@/lib/db'
 import { UI } from '@/lib/ui'
 import { Shell } from '../Shell'
 
@@ -8,9 +8,10 @@ export default async function CategoriesPage() {
   const session = await getSession()
   if (!session) redirect('/login')
 
-  const { data: categories } = await supabaseAdmin.from('categories').select('*').order('type').order('group_name').order('name')
-  const income = (categories || []).filter(c => c.type === 'income')
-  const expense = (categories || []).filter(c => c.type === 'expense')
+  const categories = await selectAll<Category>(
+    'select * from categories order by type, group_name, name', [], CAT_BOOL_FIELDS)
+  const income = categories.filter(c => c.type === 'income')
+  const expense = categories.filter(c => c.type === 'expense')
 
   return (
     <Shell active="/categorieen" email={session.email}>
@@ -25,7 +26,7 @@ export default async function CategoriesPage() {
   )
 }
 
-function Section({ title, cats }: { title: string; cats: { id: string; name: string; group_name: string | null; vat_rate: number; ai_hint: string | null }[] }) {
+function Section({ title, cats }: { title: string; cats: Category[] }) {
   return (
     <div style={{ marginBottom: 30 }}>
       <h2 style={{ fontSize: 16, fontWeight: 800, margin: '0 0 12px' }}>{title}</h2>

@@ -1,5 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk'
-import type { Category } from './supabase'
+import type { Category } from './db'
 
 const apiKey = process.env.ANTHROPIC_API_KEY
 
