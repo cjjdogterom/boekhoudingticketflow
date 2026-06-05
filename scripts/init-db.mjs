@@ -25,27 +25,27 @@ if (!url) {
 
 const client = createClient({ url, authToken })
 
-async function runSqlFile(path) {
+async function runSqlFile(path, label) {
   const sql = readFileSync(path, 'utf8')
-  // Split on semicolons not inside strings, then run each statement
-  const statements = sql
-    .split(/;\s*\n/)
-    .map(s => s.trim())
-    .filter(s => s && !s.startsWith('--'))
-  for (const stmt of statements) {
-    if (!stmt) continue
-    try {
-      await client.execute(stmt)
-    } catch (err) {
-      console.error('❌ Failed:', stmt.slice(0, 80))
-      console.error(err.message)
-    }
+  // Strip comments
+  const cleaned = sql
+    .split('\n')
+    .filter(line => !line.trim().startsWith('--'))
+    .join('\n')
+  try {
+    await client.executeMultiple(cleaned)
+    console.log(`✅ ${label} OK`)
+  } catch (err) {
+    console.error(`❌ ${label} failed:`, err.message)
   }
 }
 
 const root = dirname(fileURLToPath(import.meta.url))
-console.log('📦 Running schema.sql...')
-await runSqlFile(join(root, '..', 'turso', 'schema.sql'))
-console.log('🌱 Running seed.sql...')
-await runSqlFile(join(root, '..', 'turso', 'seed.sql'))
-console.log('✅ Done!')
+console.log('📦 Schema...')
+await runSqlFile(join(root, '..', 'turso', 'schema.sql'), 'schema')
+console.log('🌱 Seed...')
+await runSqlFile(join(root, '..', 'turso', 'seed.sql'), 'seed')
+
+// Verify by counting categories
+const { rows } = await client.execute('select count(*) as c from categories')
+console.log(`\n📊 Categorieën in database: ${rows[0].c}`)
