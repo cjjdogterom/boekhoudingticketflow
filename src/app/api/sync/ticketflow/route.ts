@@ -166,9 +166,11 @@ export async function POST() {
     // ── Balance snapshot opslaan ───────────────────────────────────────────
     const totalPayable = snapshots.reduce((s, o) => s + o.payable, 0)
     const mollieBalance = snapshots.reduce((s, o) => s + o.gross_revenue - o.payouts_total, 0)
+    // Open facturen = debiteuren (geboekt maar nog niet ontvangen)
+    const totalDebtors = invoices.filter(i => i.status !== 'paid').reduce((s, i) => s + Number(i.amount || 0), 0)
     await db.execute({
-      sql: 'insert into payable_snapshot (id, total_cents, mollie_balance, org_count) values (?, ?, ?, ?)',
-      args: [newId(), totalPayable, mollieBalance, snapshots.length],
+      sql: 'insert into payable_snapshot (id, total_cents, mollie_balance, org_count, debtors_cents) values (?, ?, ?, ?, ?)',
+      args: [newId(), totalPayable, mollieBalance, snapshots.length, totalDebtors],
     })
 
     return NextResponse.json({

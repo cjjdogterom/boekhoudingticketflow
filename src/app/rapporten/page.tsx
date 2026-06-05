@@ -57,6 +57,7 @@ export default async function ReportsPage({
       <ReportCard title="📊 Balans per 31-12" pdfHref={`/api/reports/pdf?type=bs&year=${yearNum}`}>
         <ReportSection title="Activa">
           <Line label="Saldo Mollie account" amount={bs.mollieBalance} positive />
+          {bs.debtors > 0 && <Line label="Debiteuren (openstaande facturen)" amount={bs.debtors} positive />}
           {bs.vatReceivable > 0 && <Line label="BTW te ontvangen" amount={bs.vatReceivable} positive />}
           <Total label="Totaal activa" amount={bs.totalAssets} positive bold />
         </ReportSection>

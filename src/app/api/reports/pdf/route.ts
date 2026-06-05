@@ -41,6 +41,7 @@ export async function GET(req: NextRequest) {
       <h2>Activa</h2>
       <table>
         <tr><td>Saldo Mollie account</td><td class="num">${fmt(bs.mollieBalance)}</td></tr>
+        ${bs.debtors > 0 ? `<tr><td>Debiteuren (openstaande facturen)</td><td class="num">${fmt(bs.debtors)}</td></tr>` : ''}
         ${bs.vatReceivable > 0 ? `<tr><td>BTW te ontvangen</td><td class="num">${fmt(bs.vatReceivable)}</td></tr>` : ''}
         <tr class="total"><td>Totaal activa</td><td class="num">${fmt(bs.totalAssets)}</td></tr>
       </table>

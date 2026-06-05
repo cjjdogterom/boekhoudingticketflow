@@ -61,6 +61,7 @@ export async function buildProfitLoss(period: ReportPeriod): Promise<ProfitLossR
 export interface BalanceSheetReport {
   asOf: string
   mollieBalance: number       // totaal geld op Mollie account
+  debtors: number             // openstaande facturen (nog te ontvangen van klanten)
   vatReceivable: number       // BTW betaald > BTW geïnd
   payableToOrgs: number       // wat we organisatoren nog schuldig zijn
   vatPayable: number          // BTW geïnd > BTW betaald
@@ -74,26 +75,27 @@ export async function buildBalanceSheet(asOf: string): Promise<BalanceSheetRepor
     'select * from transactions where date <= ?', [asOf], TX_BOOL_FIELDS,
   )
 
-  // Mollie saldo + verplichting uit laatste snapshot van payable_snapshot
+  // Uit laatste snapshot: Mollie saldo + verplichting aan organisatoren + debiteuren
   const { selectOne } = await import('./db')
-  const snap = await selectOne<{ total_cents: number; mollie_balance: number }>(
-    'select total_cents, mollie_balance from payable_snapshot order by snapshot_at desc limit 1',
+  const snap = await selectOne<{ total_cents: number; mollie_balance: number; debtors_cents: number }>(
+    'select total_cents, mollie_balance, debtors_cents from payable_snapshot order by snapshot_at desc limit 1',
   )
   const mollieBalance = snap?.mollie_balance ?? 0
   const payableToOrgs = snap?.total_cents ?? 0
+  const debtors = snap?.debtors_cents ?? 0
 
-  // BTW berekening uit alle transacties (boekhouding tot asOf)
+  // BTW berekening
   const vatCollected = transactions.filter(t => t.type === 'income').reduce((s, t) => s + Math.round((t.amount_cents * t.vat_rate) / (100 + t.vat_rate)), 0)
   const vatPaid = transactions.filter(t => t.type === 'expense').reduce((s, t) => s + Math.round((t.amount_cents * t.vat_rate) / (100 + t.vat_rate)), 0)
   const vatNet = vatCollected - vatPaid
   const vatPayable = Math.max(0, vatNet)
   const vatReceivable = Math.max(0, -vatNet)
 
-  const totalAssets = mollieBalance + vatReceivable
+  const totalAssets = mollieBalance + debtors + vatReceivable
   const equity = totalAssets - payableToOrgs - vatPayable
 
   return {
-    asOf, mollieBalance, vatReceivable, payableToOrgs, vatPayable, equity,
+    asOf, mollieBalance, debtors, vatReceivable, payableToOrgs, vatPayable, equity,
     totalAssets,
     totalLiabilitiesEquity: payableToOrgs + vatPayable + equity,
   }
