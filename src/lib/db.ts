@@ -110,7 +110,41 @@ export type Transaction = {
   updated_at: string
 }
 
+export type LedgerAccount = {
+  id: string
+  code: string
+  name: string
+  type: 'asset' | 'liability' | 'equity' | 'revenue' | 'expense'
+  description: string | null
+  is_active: boolean
+  created_at: string
+}
+
+export type JournalEntry = {
+  id: string
+  date: string
+  description: string
+  source: string | null
+  external_id: string | null
+  status: 'draft' | 'posted'
+  notes: string | null
+  created_at: string
+  updated_at: string
+}
+
+export type JournalLine = {
+  id: string
+  entry_id: string
+  account_id: string
+  description: string | null
+  debit_cents: number
+  credit_cents: number
+  sort_order: number
+  created_at: string
+}
+
 // Helpful constants for boolean field conversion
 export const SUB_BOOL_FIELDS = ['is_active', 'auto_log_payments']
 export const TX_BOOL_FIELDS = ['ai_categorised', 'needs_review']
 export const CAT_BOOL_FIELDS = ['is_default']
+export const ACCOUNT_BOOL_FIELDS = ['is_active']

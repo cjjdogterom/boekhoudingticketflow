@@ -4,6 +4,7 @@ import { UI, fontStack } from '@/lib/ui'
 const NAV = [
   { href: '/dashboard',     label: '📊 Dashboard' },
   { href: '/transacties',   label: '💸 Transacties' },
+  { href: '/journaalposten', label: '📒 Journaalposten' },
   { href: '/abonnementen',  label: '🔁 Abonnementen' },
   { href: '/rapporten',     label: '📈 Rapporten' },
   { href: '/categorieen',   label: '📁 Categorieën' },

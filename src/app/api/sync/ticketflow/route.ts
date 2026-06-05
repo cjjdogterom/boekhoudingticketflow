@@ -1,19 +1,19 @@
 import { NextResponse } from 'next/server'
 import { getSession } from '@/lib/auth'
 import { db, newId } from '@/lib/db'
-import { buildOrgSnapshots, fetchAllInvoices } from '@/lib/ticketflow'
+import { buildOrgSnapshots, fetchAllInvoices, fetchAllPaidTickets, fetchAllPayouts, REFUND_FEE_CENTS } from '@/lib/ticketflow'
+import { ACCOUNTS, classifyInvoiceRevenueAccount, createJournalEntryIfMissing, ensureJournalSchema, splitVatInclusive } from '@/lib/journal'
 
 export const runtime = 'nodejs'
 
 // Sync-model voor TicketFlow platform — boekhoudkundig schoon:
 //
-// W&V (winst en verlies) — alleen werkelijke inkomsten:
+// W&V (winst en verlies) — TicketFlow omzet:
 //   ✓ Service fee €0,85 per ticket → Omzet servicekosten
 //   ✓ Refund fee €0,50 per refund → Omzet servicekosten
-//   ✓ BETAALDE facturen (maatwerk + broadcasts + refunds) → Omzet overig
+//   ✓ Facturen (maatwerk + broadcasts + refunds) → Debiteuren + omzet + btw
 //   ✗ Mollie kosten worden NIET geboekt (al door Mollie verrekend op het
 //     Mollie-account vóór jij het geld ziet — geen apart in/uit van jouw kas)
-//   ✗ Open facturen NIET als omzet — alleen op balans als debiteur
 //
 // Balans:
 //   Activa:
@@ -22,11 +22,24 @@ export const runtime = 'nodejs'
 //   Passiva:
 //     Verplichting aan organisatoren = bruto − service fees − Mollie − refunds − uitbetaald
 
+function invoiceLabel(inv: { invoice_number: string | null; id: string }) {
+  return inv.invoice_number || inv.id.slice(0, 8)
+}
+
+function revenueLines(grossCents: number, accountId: string, description: string) {
+  const { net, vat } = splitVatInclusive(grossCents, 21)
+  return [
+    { account_id: accountId, credit_cents: net, description },
+    ...(vat > 0 ? [{ account_id: ACCOUNTS.vatPayable, credit_cents: vat, description: 'BTW 21%' }] : []),
+  ]
+}
+
 export async function POST() {
   const session = await getSession()
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   try {
+    await ensureJournalSchema()
     const { snapshots, rates } = await buildOrgSnapshots()
     const syncedRes = await db.execute('select external_id from ticketflow_sync')
     const synced = new Set(syncedRes.rows.map(r => (r as unknown as { external_id: string }).external_id))
@@ -35,6 +48,7 @@ export async function POST() {
     let feesAdded = 0
     let refundAdded = 0
     let invoicesAdded = 0
+    let journalAdded = 0
 
     function previousCount(prefix: string): number {
       return [...synced]
@@ -84,17 +98,151 @@ export async function POST() {
       }
     }
 
-    // ── Facturen: ALLEEN betaalde facturen op W&V als omzet ──────────────
-    // Open facturen worden NIET als income transactie geboekt — die staan
-    // alleen op de balans als Debiteuren. Bij volgende sync, als status
-    // verandert naar paid, dan WEL een transactie aanmaken.
+    // ── Journaalposten: echte TicketFlow feiten, per item idempotent ──────
+    // Ticketbetaling: Dr Mollie, Cr verplichting aan organisator.
+    // TicketFlow fee: Dr verplichting organisator, Cr omzet + btw.
+    // Mollie cost: Dr verplichting organisator, Cr Mollie.
+    // Refund: Dr verplichting organisator, Cr Mollie.
+    // Payout: Dr verplichting organisator, Cr Mollie.
+    const [tickets, payouts] = await Promise.all([
+      fetchAllPaidTickets(),
+      fetchAllPayouts(),
+    ])
+    const orderIds = new Set<string>()
+    for (const ticket of tickets) {
+      if (ticket.price_paid > 0) {
+        const ticketDate = ticket.created_at.slice(0, 10)
+        if (await createJournalEntryIfMissing({
+          date: ticketDate,
+          description: `Ticketbetaling ${ticket.org_name}`,
+          source: 'ticketflow',
+          external_id: `ticket-payment-${ticket.id}`,
+          notes: `Ticket ${ticket.id} · Event ${ticket.event_id}`,
+          lines: [
+            { account_id: ACCOUNTS.mollie, debit_cents: ticket.price_paid, description: 'Ontvangen op Mollie' },
+            { account_id: ACCOUNTS.organizerPayable, credit_cents: ticket.price_paid, description: `Verschuldigd aan ${ticket.org_name}` },
+          ],
+        })) journalAdded++
+      }
+
+      if (await createJournalEntryIfMissing({
+        date: ticket.created_at.slice(0, 10),
+        description: `TicketFlow servicefee ${ticket.org_name}`,
+        source: 'ticketflow',
+        external_id: `ticket-service-fee-${ticket.id}`,
+        notes: `Ticket ${ticket.id} · ${formatCents(rates.serviceFee)} incl. btw`,
+        lines: [
+          { account_id: ACCOUNTS.organizerPayable, debit_cents: rates.serviceFee, description: `Ingehouden op saldo ${ticket.org_name}` },
+          ...revenueLines(rates.serviceFee, ACCOUNTS.revenueFees, 'TicketFlow servicekosten'),
+        ],
+      })) journalAdded++
+
+      if (ticket.mollie_payment_id && !orderIds.has(ticket.mollie_payment_id)) {
+        orderIds.add(ticket.mollie_payment_id)
+        if (rates.mollieCost > 0 && await createJournalEntryIfMissing({
+          date: ticket.created_at.slice(0, 10),
+          description: `Mollie transactiekosten order ${ticket.mollie_payment_id.slice(0, 8)}`,
+          source: 'ticketflow',
+          external_id: `mollie-cost-${ticket.mollie_payment_id}`,
+          notes: `Mollie kosten worden niet extra als TicketFlow fee gerekend; ze verlagen Mollie saldo en organisatorverplichting.`,
+          lines: [
+            { account_id: ACCOUNTS.organizerPayable, debit_cents: rates.mollieCost, description: 'Kosten verrekend met organisator' },
+            { account_id: ACCOUNTS.mollie, credit_cents: rates.mollieCost, description: 'Door Mollie ingehouden' },
+          ],
+        })) journalAdded++
+      }
+
+      if (ticket.refunded_at && ticket.price_paid > 0) {
+        const refundDate = ticket.refunded_at.slice(0, 10)
+        if (await createJournalEntryIfMissing({
+          date: refundDate,
+          description: `Refund ticket ${ticket.org_name}`,
+          source: 'ticketflow',
+          external_id: `ticket-refund-${ticket.id}`,
+          notes: `Terugbetaling ticket ${ticket.id}`,
+          lines: [
+            { account_id: ACCOUNTS.organizerPayable, debit_cents: ticket.price_paid, description: `Minder verschuldigd aan ${ticket.org_name}` },
+            { account_id: ACCOUNTS.mollie, credit_cents: ticket.price_paid, description: 'Terugbetaald via Mollie' },
+          ],
+        })) journalAdded++
+
+        if (await createJournalEntryIfMissing({
+          date: refundDate,
+          description: `TicketFlow refundfee ${ticket.org_name}`,
+          source: 'ticketflow',
+          external_id: `ticket-refund-fee-${ticket.id}`,
+          notes: `Refund fee ${formatCents(REFUND_FEE_CENTS)} incl. btw`,
+          lines: [
+            { account_id: ACCOUNTS.organizerPayable, debit_cents: REFUND_FEE_CENTS, description: `Ingehouden op saldo ${ticket.org_name}` },
+            ...revenueLines(REFUND_FEE_CENTS, ACCOUNTS.revenueRefunds, 'TicketFlow refundkosten'),
+          ],
+        })) journalAdded++
+      }
+    }
+
+    for (const payout of payouts) {
+      if (payout.status !== 'paid') continue
+      const amount = Number(payout.amount_paid || payout.amount || 0)
+      if (amount <= 0) continue
+      if (await createJournalEntryIfMissing({
+        date: payout.created_at.slice(0, 10),
+        description: `Uitbetaling organisator`,
+        source: 'ticketflow',
+        external_id: `payout-${payout.id}`,
+        notes: `Organisator ${payout.org_id}`,
+        lines: [
+          { account_id: ACCOUNTS.organizerPayable, debit_cents: amount, description: 'Verplichting afgeboekt' },
+          { account_id: ACCOUNTS.mollie, credit_cents: amount, description: 'Uitbetaald vanaf Mollie' },
+        ],
+      })) journalAdded++
+    }
+
+    // ── Facturen ─────────────────────────────────────────────────────────
+    // Journaal: factuur verstuurd = debiteuren + omzet/btw. Betaling boekt
+    // debiteuren af naar bank. De oude simpele transaction-lijst blijft
+    // cash-basis en maakt alleen een income-transactie als de factuur betaald is.
     const invoices = await fetchAllInvoices()
     for (const inv of invoices) {
+      const amount = Number(inv.amount || 0)
+      if (amount > 0) {
+        const revenueAccount = classifyInvoiceRevenueAccount(inv)
+        if (await createJournalEntryIfMissing({
+          date: inv.created_at.slice(0, 10),
+          description: `Factuur ${invoiceLabel(inv)} verstuurd`,
+          source: 'ticketflow',
+          external_id: `invoice-issued-${inv.id}`,
+          notes: [
+            inv.status !== 'paid' ? 'Openstaande factuur' : 'Factuur geboekt; betaling apart verwerkt',
+            inv.period_label ? `Periode: ${inv.period_label}` : null,
+            inv.org_name ? `Klant: ${inv.org_name}` : null,
+            inv.notes,
+          ].filter(Boolean).join(' · '),
+          lines: [
+            { account_id: ACCOUNTS.debtors, debit_cents: amount, description: inv.org_name || 'Debiteur' },
+            ...revenueLines(amount, revenueAccount, `Factuur ${invoiceLabel(inv)}`),
+          ],
+        })) journalAdded++
+      }
+
+      if (inv.status === 'paid') {
+        const paidAmount = Number(inv.amount_paid || inv.amount || 0)
+        if (paidAmount > 0 && await createJournalEntryIfMissing({
+          date: inv.created_at.slice(0, 10),
+          description: `Factuur ${invoiceLabel(inv)} betaald`,
+          source: 'ticketflow',
+          external_id: `invoice-payment-${inv.id}`,
+          notes: inv.org_name ? `Klant: ${inv.org_name}` : null,
+          lines: [
+            { account_id: ACCOUNTS.bank, debit_cents: paidAmount, description: 'Ontvangen betaling' },
+            { account_id: ACCOUNTS.debtors, credit_cents: paidAmount, description: 'Debiteur afgeboekt' },
+          ],
+        })) journalAdded++
+      }
+
       const isPaid = inv.status === 'paid'
       const extId = isPaid ? `invoice-paid-${inv.id}` : null   // open facturen: geen tx maken
       if (!extId) continue
       if (synced.has(extId)) continue
-      const amount = Number(inv.amount || 0)
       if (amount <= 0) continue
 
       const date = inv.created_at.slice(0, 10)
@@ -135,11 +283,11 @@ export async function POST() {
 
     return NextResponse.json({
       ok: true,
-      feesAdded, refundAdded, invoicesAdded,
+      feesAdded, refundAdded, invoicesAdded, journalAdded,
       orgsProcessed: snapshots.length,
       totalPayable, mollieBalance, totalDebtors,
       rates,
-      message: `${feesAdded} servicekosten + ${refundAdded} refunds + ${invoicesAdded} betaalde facturen voor ${snapshots.length} organisator(en). Mollie saldo: €${(mollieBalance / 100).toFixed(2)} · Debiteuren: €${(totalDebtors / 100).toFixed(2)} · Verplichting aan orgs: €${(totalPayable / 100).toFixed(2)}`,
+      message: `${feesAdded} servicekosten + ${refundAdded} refunds + ${invoicesAdded} betaalde facturen + ${journalAdded} journaalposten voor ${snapshots.length} organisator(en). Mollie saldo: €${(mollieBalance / 100).toFixed(2)} · Debiteuren: €${(totalDebtors / 100).toFixed(2)} · Verplichting aan orgs: €${(totalPayable / 100).toFixed(2)}`,
     })
   } catch (err) {
     console.error('ticketflow sync failed', err)
@@ -158,5 +306,11 @@ export async function DELETE() {
   }
   await db.execute('delete from ticketflow_sync')
   await db.execute('delete from payable_snapshot')
-  return NextResponse.json({ ok: true, deleted: ids.length, message: `${ids.length} TicketFlow-transacties gewist.` })
+  await ensureJournalSchema()
+  await db.execute({ sql: `delete from journal_entries where source = ?`, args: ['ticketflow'] })
+  return NextResponse.json({ ok: true, deleted: ids.length, message: `${ids.length} TicketFlow-transacties en alle TicketFlow-journaalposten gewist.` })
+}
+
+function formatCents(cents: number) {
+  return `€${(cents / 100).toFixed(2).replace('.', ',')}`
 }

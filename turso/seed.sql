@@ -27,3 +27,23 @@ insert or ignore into subscriptions (id, name, provider, amount_cents, frequency
   ('sub-upstash',  'Upstash Redis', 'Upstash',    1000, 'monthly', 'cat-software', 'Wachtrij + caching voor TicketFlow'),
   ('sub-claude',   'Claude API',    'Anthropic',  2000, 'monthly', 'cat-software', 'AI categorisering + ondersteuning'),
   ('sub-github',   'GitHub Pro',    'GitHub',     400,  'monthly', 'cat-software', 'Private repos + Actions');
+
+-- Grootboekrekeningen voor journaalposten (dubbel boekhouden)
+insert or ignore into ledger_accounts (id, code, name, type, description) values
+  ('acc-mollie',              '1000', 'Mollie saldo',                         'asset',     'Geld dat op het TicketFlow Mollie-account staat.'),
+  ('acc-debtors',             '1100', 'Debiteuren openstaande facturen',      'asset',     'Facturen die verstuurd zijn maar nog niet betaald.'),
+  ('acc-bank',                '1200', 'Bank',                                 'asset',     'Zakelijke bankrekening / ontvangen factuurbetalingen.'),
+  ('acc-vat-receivable',      '1600', 'Te ontvangen btw',                     'asset',     'Voorbelasting die nog terug te vragen is.'),
+  ('acc-organizer-payable',   '2000', 'Te betalen aan organisatoren',         'liability', 'Ticketgelden die TicketFlow nog aan organisatoren moet uitbetalen.'),
+  ('acc-vat-payable',         '2100', 'Te betalen btw',                       'liability', 'BTW over TicketFlow omzet die nog afgedragen moet worden.'),
+  ('acc-equity',              '3000', 'Eigen vermogen',                       'equity',    'Sluitpost voor balans/eigen vermogen.'),
+  ('acc-revenue-fees',        '4000', 'Omzet TicketFlow servicekosten',       'revenue',   '€0,85 platformfee en vergelijkbare ticketservicekosten.'),
+  ('acc-revenue-custom-sites','4010', 'Omzet maatwerksites',                  'revenue',   'Eenmalige maatwerk website/app inkomsten.'),
+  ('acc-revenue-broadcast',   '4020', 'Omzet broadcastmails',                 'revenue',   'Betaalde e-mailbroadcasts vanuit TicketFlow.'),
+  ('acc-revenue-refunds',     '4030', 'Omzet refundkosten',                   'revenue',   'Kosten die TicketFlow rekent voor terugbetalingen.'),
+  ('acc-revenue-other',       '4090', 'Omzet overig TicketFlow',              'revenue',   'Overige TicketFlow facturen.'),
+  ('acc-software',            '7000', 'Softwareabonnementen',                 'expense',   'SaaS-tools die niet direct hosting/e-mail/AI zijn.'),
+  ('acc-hosting',             '7010', 'Hosting, database en infrastructuur',  'expense',   'Vercel, Turso, Upstash, domeinen en hosting.'),
+  ('acc-email',               '7020', 'E-mailkosten Resend',                  'expense',   'Resend en mail-gerelateerde kosten.'),
+  ('acc-ai-tools',            '7030', 'AI en development tools',              'expense',   'Claude, OpenAI, GitHub en development tooling.'),
+  ('acc-bank-costs',          '7040', 'Bank- en Mollie kosten',               'expense',   'Bankkosten en payment-provider kosten indien apart betaald.');
