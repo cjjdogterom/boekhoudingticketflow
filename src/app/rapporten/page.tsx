@@ -1,8 +1,9 @@
+import type React from 'react'
 import { redirect } from 'next/navigation'
 import { getSession } from '@/lib/auth'
 import { Shell } from '../Shell'
-import { UI, formatEuro } from '@/lib/ui'
-import { buildBalanceSheet, buildCashFlow, buildProfitLoss, currentYearPeriod } from '@/lib/reports'
+import { UI, formatEuro, fontStack } from '@/lib/ui'
+import { buildBalanceSheet, buildCashFlow, buildProfitLoss } from '@/lib/reports'
 
 export default async function ReportsPage({
   searchParams,
@@ -15,74 +16,85 @@ export default async function ReportsPage({
   const { year } = await searchParams
   const yearNum = year ? parseInt(year, 10) : new Date().getFullYear()
   const period = { from: `${yearNum}-01-01`, to: `${yearNum}-12-31` }
-  const asOf = period.to
 
   const [pl, bs, cf] = await Promise.all([
     buildProfitLoss(period),
-    buildBalanceSheet(asOf),
+    buildBalanceSheet(period.to),
     buildCashFlow(period),
   ])
 
+  const balanceOk = bs.difference === 0
+
   return (
     <Shell active="/rapporten" email={session.email}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 18, flexWrap: 'wrap', gap: 12 }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 18, flexWrap: 'wrap', gap: 12 }}>
         <div>
           <h1 style={{ fontSize: 26, fontWeight: 900, margin: '0 0 4px' }}>Rapporten {yearNum}</h1>
-          <p style={{ color: UI.textMuted, fontSize: 14, margin: 0 }}>Financiële overzichten — downloadbaar als PDF.</p>
+          <p style={{ color: UI.textMuted, fontSize: 14, margin: 0 }}>
+            Gebaseerd op geboekte journaalposten. Conceptposten tellen niet mee.
+          </p>
         </div>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <a href={`/rapporten?year=${yearNum - 1}`} style={navLink}>← {yearNum - 1}</a>
-          <a href={`/rapporten?year=${yearNum + 1}`} style={navLink}>{yearNum + 1} →</a>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <a href={`/rapporten?year=${yearNum - 1}`} style={navLink}>Vorig jaar</a>
+          <a href={`/rapporten?year=${yearNum + 1}`} style={navLink}>Volgend jaar</a>
+          <a href="/journaalposten" style={primaryLink}>Journaalposten</a>
         </div>
       </div>
 
-      {/* ── Profit & Loss ── */}
-      <ReportCard title="📈 Winst- en Verliesrekening (P&L)" pdfHref={`/api/reports/pdf?type=pl&year=${yearNum}`}>
-        <ReportSection title="Inkomsten">
-          {pl.revenue.length === 0 && <Empty />}
-          {pl.revenue.map((l, i) => <Line key={i} label={l.categoryName} amount={l.amount} positive />)}
-          <Total label="Totaal inkomsten" amount={pl.totalRevenue} positive />
-        </ReportSection>
-        <ReportSection title="Uitgaven">
-          {pl.expenses.length === 0 && <Empty />}
-          {pl.expenses.map((l, i) => <Line key={i} label={l.categoryName} amount={l.amount} />)}
-          <Total label="Totaal uitgaven" amount={pl.totalExpenses} />
-        </ReportSection>
-        <div style={{ borderTop: `2px solid ${UI.border}`, marginTop: 10, paddingTop: 10 }}>
-          <Total label="Netto resultaat" amount={pl.netResult} positive={pl.netResult >= 0} bold />
-        </div>
-      </ReportCard>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 10, marginBottom: 14 }}>
+        <Kpi label="Omzet" amount={pl.totalRevenue} tone="good" />
+        <Kpi label="Kosten" amount={pl.totalExpenses} />
+        <Kpi label="Resultaat" amount={pl.netResult} tone={pl.netResult >= 0 ? 'good' : 'danger'} />
+        <Kpi label="Balansverschil" amount={bs.difference} tone={balanceOk ? 'good' : 'danger'} />
+      </div>
 
-      {/* ── Balance Sheet ── */}
-      <ReportCard title="📊 Balans per 31-12" pdfHref={`/api/reports/pdf?type=bs&year=${yearNum}`}>
-        <ReportSection title="Activa">
-          <Line label="Saldo Mollie account" amount={bs.mollieBalance} positive />
-          {bs.debtors > 0 && <Line label="Debiteuren (openstaande facturen)" amount={bs.debtors} positive />}
-          {bs.vatReceivable > 0 && <Line label="BTW te ontvangen" amount={bs.vatReceivable} positive />}
-          <Total label="Totaal activa" amount={bs.totalAssets} positive bold />
-        </ReportSection>
-        <ReportSection title="Passiva &amp; Eigen Vermogen">
-          <Line label="Verplichting aan organisatoren" amount={bs.payableToOrgs} />
-          {bs.vatPayable > 0 && <Line label="BTW af te dragen" amount={bs.vatPayable} />}
-          <Line label="Eigen vermogen" amount={bs.equity} positive={bs.equity >= 0} />
-          <Total label="Totaal passiva" amount={bs.totalLiabilitiesEquity} bold />
-        </ReportSection>
-      </ReportCard>
+      <div style={{ background: balanceOk ? UI.successSoft : UI.dangerSoft, border: `1px solid ${balanceOk ? '#86efac' : '#fecaca'}`, color: balanceOk ? '#166534' : UI.danger, borderRadius: UI.radius, padding: '12px 14px', fontSize: 13, fontWeight: 800, marginBottom: 16 }}>
+        {balanceOk
+          ? 'Balans sluit: activa zijn gelijk aan passiva plus eigen vermogen.'
+          : `Balans sluit nog niet. Verschil: ${formatSignedEuro(bs.difference)}. Controleer ontbrekende of ongebalanceerde journaalposten.`}
+      </div>
 
-      {/* ── Cash Flow ── */}
-      <ReportCard title="💰 Kasstroomoverzicht" pdfHref={`/api/reports/pdf?type=cf&year=${yearNum}`}>
-        <ReportSection title="Operationele activiteiten">
-          <Line label="Inkomsten" amount={cf.operatingIncome} positive />
-          <Line label="Uitgaven (operationeel)" amount={-cf.operatingExpenses} />
-          <Total label="Netto operationele kasstroom" amount={cf.netOperatingCashFlow} positive={cf.netOperatingCashFlow >= 0} />
-        </ReportSection>
-        <ReportSection title="Financieringsactiviteiten">
-          <Line label="Privé-onttrekkingen" amount={-cf.privateWithdrawals} />
-        </ReportSection>
-        <div style={{ borderTop: `2px solid ${UI.border}`, marginTop: 10, paddingTop: 10 }}>
-          <Line label="Kasstand begin" amount={cf.cashStart} positive={cf.cashStart >= 0} />
-          <Line label="Netto kasstroom" amount={cf.netCashFlow} positive={cf.netCashFlow >= 0} />
-          <Total label="Kasstand eind" amount={cf.cashEnd} positive={cf.cashEnd >= 0} bold />
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(420px, 100%), 1fr))', gap: 16 }}>
+        <ReportCard title="Winst- en verliesrekening" pdfHref={`/api/reports/pdf?type=pl&year=${yearNum}`}>
+          <ReportSection title="Omzet">
+            {pl.revenue.length === 0 && <Empty />}
+            {pl.revenue.map(line => <Line key={line.accountCode || line.categoryName} code={line.accountCode} label={line.categoryName} amount={line.amount} positive />)}
+            <Total label="Totaal omzet" amount={pl.totalRevenue} positive />
+          </ReportSection>
+          <ReportSection title="Kosten">
+            {pl.expenses.length === 0 && <Empty />}
+            {pl.expenses.map(line => <Line key={line.accountCode || line.categoryName} code={line.accountCode} label={line.categoryName} amount={line.amount} />)}
+            <Total label="Totaal kosten" amount={pl.totalExpenses} />
+          </ReportSection>
+          <GrandTotal label="Netto resultaat" amount={pl.netResult} />
+        </ReportCard>
+
+        <ReportCard title="Balans" pdfHref={`/api/reports/pdf?type=bs&year=${yearNum}`}>
+          <ReportSection title="Activa">
+            {bs.assets.length === 0 && <Empty />}
+            {bs.assets.map(line => <Line key={line.accountId} code={line.accountCode} label={line.accountName} amount={line.amount} positive={line.amount >= 0} />)}
+            <Total label="Totaal activa" amount={bs.totalAssets} positive />
+          </ReportSection>
+          <ReportSection title="Passiva">
+            {bs.liabilities.length === 0 && <Empty />}
+            {bs.liabilities.map(line => <Line key={line.accountId} code={line.accountCode} label={line.accountName} amount={line.amount} />)}
+            <Total label="Totaal passiva" amount={bs.totalLiabilities} />
+          </ReportSection>
+          <ReportSection title="Eigen vermogen">
+            {bs.equityLines.map(line => <Line key={line.accountId} code={line.accountCode} label={line.accountName} amount={line.amount} positive={line.amount >= 0} />)}
+            <Line label="Resultaat tot en met balansdatum" amount={bs.equity - bs.equityLines.reduce((total, line) => total + line.amount, 0)} positive={bs.equity >= 0} />
+            <Total label="Totaal eigen vermogen" amount={bs.totalEquity} positive={bs.totalEquity >= 0} />
+          </ReportSection>
+          <GrandTotal label="Passiva + eigen vermogen" amount={bs.totalLiabilitiesEquity} neutral />
+        </ReportCard>
+      </div>
+
+      <ReportCard title="Kasmutatie" pdfHref={`/api/reports/pdf?type=cf&year=${yearNum}`}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: 12 }}>
+          <MiniPanel label="Kas begin" amount={cf.cashStart} />
+          <MiniPanel label="Ontvangsten op Bank/Mollie" amount={cf.receipts} tone="good" />
+          <MiniPanel label="Betalingen vanaf Bank/Mollie" amount={cf.payments} />
+          <MiniPanel label="Kas eind" amount={cf.cashEnd} tone={cf.cashEnd >= 0 ? 'good' : 'danger'} />
         </div>
       </ReportCard>
     </Shell>
@@ -91,51 +103,89 @@ export default async function ReportsPage({
 
 function ReportCard({ title, pdfHref, children }: { title: string; pdfHref: string; children: React.ReactNode }) {
   return (
-    <div style={{ background: UI.card, border: `1px solid ${UI.borderSoft}`, borderRadius: 12, padding: 22, marginBottom: 16 }}>
+    <section style={{ background: UI.card, border: `1px solid ${UI.borderSoft}`, borderRadius: UI.radius, padding: 18, marginBottom: 16, boxShadow: UI.shadow }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14, flexWrap: 'wrap', gap: 10 }}>
-        <h2 style={{ fontSize: 16, fontWeight: 800, margin: 0 }}>{title}</h2>
-        <a href={pdfHref} target="_blank" rel="noreferrer" style={{ background: UI.primarySoft, color: UI.primary, border: `1px solid ${UI.primaryBorder}`, padding: '6px 12px', borderRadius: 7, fontSize: 12, fontWeight: 700, textDecoration: 'none' }}>
-          📄 PDF
-        </a>
+        <h2 style={{ fontSize: 17, fontWeight: 900, margin: 0 }}>{title}</h2>
+        <a href={pdfHref} target="_blank" rel="noreferrer" style={pdfLink}>PDF</a>
       </div>
       {children}
-    </div>
+    </section>
   )
 }
 
 function ReportSection({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div style={{ marginBottom: 14 }}>
-      <h3 style={{ fontSize: 12, fontWeight: 700, color: UI.textMuted, textTransform: 'uppercase', letterSpacing: 0.4, margin: '0 0 8px' }}>{title}</h3>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>{children}</div>
+      <h3 style={{ fontSize: 12, fontWeight: 800, color: UI.textMuted, textTransform: 'uppercase', letterSpacing: 0, margin: '0 0 8px' }}>{title}</h3>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>{children}</div>
     </div>
   )
 }
 
-function Line({ label, amount, positive, bold }: { label: string; amount: number; positive?: boolean; bold?: boolean }) {
+function Line({ label, amount, positive, code }: { label: string; amount: number; positive?: boolean; code?: string }) {
   return (
-    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', fontSize: 13, padding: '4px 0' }}>
-      <span style={{ color: UI.text, fontWeight: bold ? 700 : 500 }}>{label}</span>
-      <span style={{ fontFamily: 'monospace', fontWeight: bold ? 800 : 600, color: positive ? UI.success : amount < 0 ? UI.danger : UI.text }}>
-        {amount < 0 ? '−' : ''}{formatEuro(Math.abs(amount))}
-      </span>
+    <div style={{ display: 'grid', gridTemplateColumns: code ? '52px minmax(0, 1fr) auto' : 'minmax(0, 1fr) auto', gap: 10, alignItems: 'baseline', fontSize: 13, padding: '5px 0' }}>
+      {code && <span style={{ color: UI.textFaint, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 12 }}>{code}</span>}
+      <span style={{ color: UI.text, fontWeight: 600 }}>{label}</span>
+      <Amount amount={amount} positive={positive} />
     </div>
   )
 }
 
-function Total({ label, amount, positive, bold }: { label: string; amount: number; positive?: boolean; bold?: boolean }) {
+function Total({ label, amount, positive }: { label: string; amount: number; positive?: boolean }) {
   return (
-    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', fontSize: 14, padding: '8px 0 4px', borderTop: `1px solid ${UI.borderSoft}`, marginTop: 6 }}>
-      <span style={{ fontWeight: 800, color: UI.text }}>{label}</span>
-      <span style={{ fontFamily: 'monospace', fontWeight: 900, fontSize: bold ? 16 : 14, color: positive ? UI.success : amount < 0 ? UI.danger : UI.text }}>
-        {amount < 0 ? '−' : ''}{formatEuro(Math.abs(amount))}
-      </span>
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', fontSize: 14, padding: '9px 0 4px', borderTop: `1px solid ${UI.borderSoft}`, marginTop: 6 }}>
+      <span style={{ fontWeight: 900, color: UI.text }}>{label}</span>
+      <Amount amount={amount} positive={positive} strong />
+    </div>
+  )
+}
+
+function GrandTotal({ label, amount, neutral }: { label: string; amount: number; neutral?: boolean }) {
+  return (
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', borderTop: `2px solid ${UI.border}`, marginTop: 12, paddingTop: 12 }}>
+      <span style={{ fontWeight: 900, color: UI.text }}>{label}</span>
+      <Amount amount={amount} positive={neutral ? undefined : amount >= 0} strong large />
+    </div>
+  )
+}
+
+function Amount({ amount, positive, strong, large }: { amount: number; positive?: boolean; strong?: boolean; large?: boolean }) {
+  return (
+    <span style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontWeight: strong ? 900 : 700, fontSize: large ? 17 : 13, color: positive ? UI.success : amount < 0 ? UI.danger : UI.text, whiteSpace: 'nowrap' }}>
+      {formatSignedEuro(amount)}
+    </span>
+  )
+}
+
+function Kpi({ label, amount, tone }: { label: string; amount: number; tone?: 'good' | 'danger' }) {
+  const color = tone === 'good' ? UI.success : tone === 'danger' ? UI.danger : UI.text
+  return (
+    <div style={{ background: UI.card, border: `1px solid ${UI.borderSoft}`, borderRadius: UI.radius, padding: '13px 14px', boxShadow: UI.shadow }}>
+      <div style={{ color: UI.textMuted, fontSize: 11, fontWeight: 900, textTransform: 'uppercase', letterSpacing: 0 }}>{label}</div>
+      <div style={{ color, fontSize: 20, fontWeight: 900, marginTop: 6, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>{formatSignedEuro(amount)}</div>
+    </div>
+  )
+}
+
+function MiniPanel({ label, amount, tone }: { label: string; amount: number; tone?: 'good' | 'danger' }) {
+  return (
+    <div style={{ background: UI.cardSoft, border: `1px solid ${UI.borderSoft}`, borderRadius: 10, padding: 13 }}>
+      <div style={{ color: UI.textMuted, fontSize: 12, fontWeight: 800 }}>{label}</div>
+      <div style={{ marginTop: 5 }}><Amount amount={amount} positive={tone === 'good' ? true : undefined} strong /></div>
     </div>
   )
 }
 
 function Empty() {
-  return <div style={{ color: UI.textFaint, fontSize: 12, fontStyle: 'italic', padding: '6px 0' }}>Geen posten in deze periode</div>
+  return <div style={{ color: UI.textFaint, fontSize: 12, fontStyle: 'italic', padding: '6px 0' }}>Geen geboekte posten</div>
 }
 
-const navLink: React.CSSProperties = { background: UI.cardSoft, border: `1px solid ${UI.border}`, padding: '6px 12px', borderRadius: 7, fontSize: 12, color: UI.text, textDecoration: 'none', fontWeight: 600 }
+function formatSignedEuro(cents: number): string {
+  if (cents < 0) return `-${formatEuro(Math.abs(cents))}`
+  return formatEuro(cents)
+}
+
+const navLink: React.CSSProperties = { background: UI.cardSoft, border: `1px solid ${UI.border}`, padding: '8px 11px', borderRadius: 7, fontSize: 12, color: UI.text, textDecoration: 'none', fontWeight: 800, fontFamily: fontStack }
+const primaryLink: React.CSSProperties = { ...navLink, background: UI.primary, border: `1px solid ${UI.primary}`, color: '#fff' }
+const pdfLink: React.CSSProperties = { background: UI.primarySoft, color: UI.primary, border: `1px solid ${UI.primaryBorder}`, padding: '7px 12px', borderRadius: 7, fontSize: 12, fontWeight: 900, textDecoration: 'none', fontFamily: fontStack }

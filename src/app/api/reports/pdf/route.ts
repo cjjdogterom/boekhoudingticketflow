@@ -10,6 +10,23 @@ function fmt(cents: number): string {
   return neg ? `−${v}` : v
 }
 
+function esc(value: string): string {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+}
+
+function reportRows(lines: Array<{ accountCode?: string; categoryName?: string; accountName?: string; amount: number }>): string {
+  if (lines.length === 0) return '<tr><td class="muted" colspan="2">Geen geboekte posten</td></tr>'
+  return lines.map(line => {
+    const code = line.accountCode ? `<span class="code">${esc(line.accountCode)}</span>` : ''
+    const label = esc(line.categoryName || line.accountName || '')
+    return `<tr><td>${code}${label}</td><td class="num">${fmt(line.amount)}</td></tr>`
+  }).join('')
+}
+
 export async function GET(req: NextRequest) {
   const session = await getSession()
   if (!session) return new Response('Unauthorized', { status: 401 })
@@ -26,12 +43,12 @@ export async function GET(req: NextRequest) {
     const pl = await buildProfitLoss(period)
     title = `Winst- en Verliesrekening ${year}`
     body = `
-      <h2>Inkomsten</h2>
-      <table>${pl.revenue.map(l => `<tr><td>${l.categoryName}</td><td class="num">${fmt(l.amount)}</td></tr>`).join('')}
-      <tr class="total"><td>Totaal inkomsten</td><td class="num">${fmt(pl.totalRevenue)}</td></tr></table>
-      <h2>Uitgaven</h2>
-      <table>${pl.expenses.map(l => `<tr><td>${l.categoryName}</td><td class="num">${fmt(l.amount)}</td></tr>`).join('')}
-      <tr class="total"><td>Totaal uitgaven</td><td class="num">${fmt(pl.totalExpenses)}</td></tr></table>
+      <h2>Omzet</h2>
+      <table>${reportRows(pl.revenue)}
+      <tr class="total"><td>Totaal omzet</td><td class="num">${fmt(pl.totalRevenue)}</td></tr></table>
+      <h2>Kosten</h2>
+      <table>${reportRows(pl.expenses)}
+      <tr class="total"><td>Totaal kosten</td><td class="num">${fmt(pl.totalExpenses)}</td></tr></table>
       <table class="result"><tr class="grand"><td>Netto resultaat</td><td class="num">${fmt(pl.netResult)}</td></tr></table>
     `
   } else if (type === 'bs') {
@@ -40,36 +57,34 @@ export async function GET(req: NextRequest) {
     body = `
       <h2>Activa</h2>
       <table>
-        <tr><td>Saldo Mollie account</td><td class="num">${fmt(bs.mollieBalance)}</td></tr>
-        ${bs.debtors > 0 ? `<tr><td>Debiteuren (openstaande facturen)</td><td class="num">${fmt(bs.debtors)}</td></tr>` : ''}
-        ${bs.vatReceivable > 0 ? `<tr><td>BTW te ontvangen</td><td class="num">${fmt(bs.vatReceivable)}</td></tr>` : ''}
+        ${reportRows(bs.assets.map(line => ({ accountCode: line.accountCode, accountName: line.accountName, amount: line.amount })))}
         <tr class="total"><td>Totaal activa</td><td class="num">${fmt(bs.totalAssets)}</td></tr>
       </table>
-      <h2>Passiva &amp; Eigen Vermogen</h2>
+      <h2>Passiva</h2>
       <table>
-        <tr><td>Verplichting aan organisatoren</td><td class="num">${fmt(bs.payableToOrgs)}</td></tr>
-        ${bs.vatPayable > 0 ? `<tr><td>BTW af te dragen</td><td class="num">${fmt(bs.vatPayable)}</td></tr>` : ''}
-        <tr><td>Eigen vermogen</td><td class="num">${fmt(bs.equity)}</td></tr>
-        <tr class="total"><td>Totaal passiva</td><td class="num">${fmt(bs.totalLiabilitiesEquity)}</td></tr>
+        ${reportRows(bs.liabilities.map(line => ({ accountCode: line.accountCode, accountName: line.accountName, amount: line.amount })))}
+        <tr class="total"><td>Totaal passiva</td><td class="num">${fmt(bs.totalLiabilities)}</td></tr>
+      </table>
+      <h2>Eigen vermogen</h2>
+      <table>
+        ${reportRows([
+          ...bs.equityLines.map(line => ({ accountCode: line.accountCode, accountName: line.accountName, amount: line.amount })),
+          { accountName: 'Resultaat tot en met balansdatum', amount: bs.equity - bs.equityLines.reduce((total, line) => total + line.amount, 0) },
+        ])}
+        <tr class="total"><td>Totaal eigen vermogen</td><td class="num">${fmt(bs.totalEquity)}</td></tr>
+        <tr class="grand"><td>Passiva + eigen vermogen</td><td class="num">${fmt(bs.totalLiabilitiesEquity)}</td></tr>
+        <tr><td>Balansverschil</td><td class="num">${fmt(bs.difference)}</td></tr>
       </table>
     `
   } else if (type === 'cf') {
     const cf = await buildCashFlow(period)
-    title = `Kasstroomoverzicht ${year}`
+    title = `Kasmutatie ${year}`
     body = `
-      <h2>Operationele activiteiten</h2>
-      <table>
-        <tr><td>Inkomsten</td><td class="num">${fmt(cf.operatingIncome)}</td></tr>
-        <tr><td>Uitgaven (operationeel)</td><td class="num">${fmt(-cf.operatingExpenses)}</td></tr>
-        <tr class="total"><td>Netto operationele kasstroom</td><td class="num">${fmt(cf.netOperatingCashFlow)}</td></tr>
-      </table>
-      <h2>Financieringsactiviteiten</h2>
-      <table>
-        <tr><td>Privé-onttrekkingen</td><td class="num">${fmt(-cf.privateWithdrawals)}</td></tr>
-      </table>
-      <h2>Mutatie kasstand</h2>
+      <h2>Bank en Mollie</h2>
       <table>
         <tr><td>Kasstand begin ${year}</td><td class="num">${fmt(cf.cashStart)}</td></tr>
+        <tr><td>Ontvangsten</td><td class="num">${fmt(cf.receipts)}</td></tr>
+        <tr><td>Betalingen</td><td class="num">${fmt(cf.payments)}</td></tr>
         <tr><td>Netto kasstroom</td><td class="num">${fmt(cf.netCashFlow)}</td></tr>
         <tr class="grand"><td>Kasstand eind ${year}</td><td class="num">${fmt(cf.cashEnd)}</td></tr>
       </table>
@@ -94,6 +109,8 @@ export async function GET(req: NextRequest) {
   h2 { font-size: 14px; margin: 22px 0 8px; padding-bottom: 4px; border-bottom: 2px solid #0ea5e9; color: #0c4a6e; }
   table { width: 100%; border-collapse: collapse; font-size: 13px; margin-bottom: 8px; }
   td { padding: 6px 8px; }
+  .code { display: inline-block; min-width: 44px; color: #64748b; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
+  .muted { color: #94a3b8; font-style: italic; }
   .num { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; text-align: right; font-variant-numeric: tabular-nums; }
   tr.total td { border-top: 1px solid #cbd5e1; padding-top: 8px; font-weight: 700; }
   tr.grand td { border-top: 2px solid #0f172a; padding: 10px 8px; font-weight: 800; font-size: 14px; }
@@ -110,7 +127,7 @@ export async function GET(req: NextRequest) {
     <h1>${title}</h1>
     <div class="subtitle">Boekjaar ${year} · Gegenereerd op ${new Date().toLocaleDateString('nl-NL', { day: 'numeric', month: 'long', year: 'numeric' })}</div>
     ${body}
-    <div class="meta">Boekhouding TicketFlow · enkelvoudige boekhouding · alle bedragen in EUR incl. BTW tenzij anders vermeld</div>
+    <div class="meta">Boekhouding TicketFlow · dubbele boekhouding op basis van geboekte journaalposten · alle bedragen in EUR</div>
   </div>
   <script>
     if (window.location.search.includes('print=1')) setTimeout(() => window.print(), 400);
