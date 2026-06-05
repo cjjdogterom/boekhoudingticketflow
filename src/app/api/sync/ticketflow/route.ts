@@ -53,7 +53,10 @@ export async function POST() {
     }
 
     // ── Invoices (facturen van TicketFlow aan organisatoren) ──
-    // Voor de owner-org zelf: dit zijn KOSTEN (servicekosten die TicketFlow rekent).
+    // Alle facturen (open EN betaald) worden geïmporteerd als uitgave.
+    // Open facturen krijgen needs_review = 1 zodat ze opvallen tot ze
+    // betaald zijn. Bij volgende sync worden ze niet opnieuw aangemaakt
+    // (gededupliceerd via ticketflow_sync).
     const invoices = await fetchInvoices(orgId)
     for (const inv of invoices) {
       const extId = `invoice-${inv.id}`
@@ -61,22 +64,28 @@ export async function POST() {
       const amount = Number(inv.amount || 0)
       if (amount <= 0) continue
 
-      const date = (inv.paid_at || inv.due_date || inv.created_at).slice(0, 10)
-      const vatTotal = Number(inv.vat_amount || 0)
-      const vatRate = vatTotal > 0 && amount > vatTotal ? 21 : 0
+      // Datum: bij open factuur de aanmaakdatum, bij betaalde factuur ook (we hebben geen paid_at veld).
+      const date = inv.created_at.slice(0, 10)
+      const isPaid = inv.status === 'paid'
+      const statusLabel = isPaid ? '✓ Betaald' : '⏳ Open / nog niet betaald'
+      const noteParts = [
+        `Status: ${inv.status}`,
+        inv.period_label ? `Periode: ${inv.period_label}` : null,
+        inv.notes,
+      ].filter(Boolean)
 
       const txId = newId()
       await db.execute({
-        sql: `insert into transactions (id, date, description, amount_cents, type, vat_rate, category_id, source, external_id, ai_categorised, notes)
-              values (?, ?, ?, ?, 'expense', ?, 'cat-software', 'ticketflow', ?, 0, ?)`,
+        sql: `insert into transactions (id, date, description, amount_cents, type, vat_rate, category_id, source, external_id, ai_categorised, needs_review, notes)
+              values (?, ?, ?, ?, 'expense', 21, 'cat-software', 'ticketflow', ?, 0, ?, ?)`,
         args: [
           txId,
           date,
-          `TicketFlow factuur ${inv.invoice_number || inv.id.slice(0, 8)}${inv.description ? ` — ${inv.description}` : ''}`,
+          `TicketFlow factuur ${inv.invoice_number || inv.id.slice(0, 8)} — ${statusLabel}`,
           amount,
-          vatRate,
           extId,
-          `Status: ${inv.status}`,
+          isPaid ? 0 : 1,   // needs_review = 1 voor open facturen
+          noteParts.join(' · '),
         ],
       })
       await db.execute({

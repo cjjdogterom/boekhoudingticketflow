@@ -33,12 +33,12 @@ export interface TFInvoice {
   id: string
   invoice_number: string | null
   amount: number          // cents (total incl BTW)
-  vat_amount: number      // cents
-  description: string | null
-  paid_at: string | null
-  due_date: string | null
+  amount_paid: number     // cents
+  org_name: string | null
+  notes: string | null
+  period_label: string | null
   created_at: string
-  status: string
+  status: string          // 'open' | 'paid'
 }
 
 export async function fetchOwnerOrgId(): Promise<string | null> {
@@ -67,12 +67,11 @@ export async function fetchInvoices(orgId: string): Promise<TFInvoice[]> {
   const client = tfClient()
   const { data, error } = await client
     .from('invoices')
-    .select('id, invoice_number, amount, vat_amount, description, paid_at, due_date, created_at, status')
+    .select('id, invoice_number, amount, amount_paid, org_name, notes, period_label, created_at, status')
     .eq('org_id', orgId)
     .order('created_at', { ascending: false })
-  // Some installations may not have invoices table — soft fail.
   if (error) {
-    console.warn('invoices fetch failed (table may not exist):', error.message)
+    console.warn('invoices fetch failed:', error.message)
     return []
   }
   return (data ?? []) as unknown as TFInvoice[]
