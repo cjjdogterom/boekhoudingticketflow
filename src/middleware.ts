@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSessionFromRequest } from '@/lib/auth'
 
-const PROTECTED = ['/dashboard', '/transacties', '/abonnementen', '/categorieen', '/instellingen']
+const PROTECTED = ['/dashboard', '/transacties', '/abonnementen', '/rapporten', '/categorieen', '/instellingen']
 
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl

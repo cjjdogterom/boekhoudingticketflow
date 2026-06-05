@@ -2,55 +2,64 @@ import { redirect } from 'next/navigation'
 import { getSession } from '@/lib/auth'
 import { Shell } from '../Shell'
 import { UI } from '@/lib/ui'
+import SyncButton from './SyncButton'
 
 export default async function SettingsPage() {
   const session = await getSession()
   if (!session) redirect('/login')
 
+  const aiConfigured = !!process.env.ANTHROPIC_API_KEY
+  const tfConfigured = !!process.env.TICKETFLOW_SUPABASE_URL && !!process.env.TICKETFLOW_SUPABASE_SERVICE_KEY
+
   return (
     <Shell active="/instellingen" email={session.email}>
       <h1 style={{ fontSize: 26, fontWeight: 900, margin: '0 0 4px' }}>Instellingen</h1>
-      <p style={{ color: UI.textMuted, fontSize: 14, margin: '0 0 24px' }}>Configuratie van het boekhoudsysteem.</p>
+      <p style={{ color: UI.textMuted, fontSize: 14, margin: '0 0 24px' }}>Configuratie en synchronisatie.</p>
 
-      <div style={{ background: UI.card, border: `1px solid ${UI.borderSoft}`, borderRadius: 12, padding: 22, marginBottom: 16 }}>
-        <h2 style={{ fontSize: 16, fontWeight: 800, margin: '0 0 12px' }}>Account</h2>
-        <div style={{ fontSize: 13, color: UI.textMuted }}>Ingelogd als: <strong style={{ color: UI.text }}>{session.email}</strong></div>
-      </div>
+      <Card title="Account">
+        Ingelogd als: <strong>{session.email}</strong>
+      </Card>
 
-      <div style={{ background: UI.card, border: `1px solid ${UI.borderSoft}`, borderRadius: 12, padding: 22, marginBottom: 16 }}>
-        <h2 style={{ fontSize: 16, fontWeight: 800, margin: '0 0 12px' }}>🤖 AI-categorisering</h2>
-        <p style={{ fontSize: 13, color: UI.textMuted, marginBottom: 12 }}>
-          Status van de AI: <strong style={{ color: process.env.ANTHROPIC_API_KEY ? UI.success : UI.danger }}>
-            {process.env.ANTHROPIC_API_KEY ? '✓ Geconfigureerd' : '✗ Niet geconfigureerd'}
-          </strong>
-        </p>
-        {!process.env.ANTHROPIC_API_KEY && (
-          <p style={{ fontSize: 12, color: UI.textFaint }}>
-            Voeg <code style={code}>ANTHROPIC_API_KEY</code> toe aan je Vercel env vars om Claude AI te activeren voor automatische categorisering.
+      <Card title="🤖 AI-categorisering">
+        Status: <strong style={{ color: aiConfigured ? UI.success : UI.danger }}>
+          {aiConfigured ? '✓ Geconfigureerd' : '✗ Niet geconfigureerd'}
+        </strong>
+        {!aiConfigured && (
+          <p style={{ fontSize: 12, color: UI.textFaint, marginTop: 8 }}>
+            Voeg <code style={code}>ANTHROPIC_API_KEY</code> toe in Vercel env vars.
           </p>
         )}
-      </div>
+      </Card>
 
-      <div style={{ background: UI.card, border: `1px solid ${UI.borderSoft}`, borderRadius: 12, padding: 22, marginBottom: 16 }}>
-        <h2 style={{ fontSize: 16, fontWeight: 800, margin: '0 0 12px' }}>📥 Import vanuit TicketFlow</h2>
-        <p style={{ fontSize: 13, color: UI.textMuted, marginBottom: 12 }}>
-          (Nog te implementeren) Automatisch importeren van Mollie-betalingen, uitbetalingen en facturen vanuit je TicketFlow account.
+      <Card title="📥 TicketFlow synchronisatie">
+        <p style={{ fontSize: 13, color: UI.textMuted, marginBottom: 10 }}>
+          Importeert <strong>uitbetalingen</strong> en <strong>facturen</strong> van TicketFlow voor de organisatie
+          gekoppeld aan <code style={code}>dogteromc03@gmail.com</code>. Dupliacten worden overgeslagen.
         </p>
-        <button disabled style={{ background: UI.cardSoft, color: UI.textFaint, border: `1px solid ${UI.border}`, padding: '8px 16px', borderRadius: 8, fontSize: 13, cursor: 'not-allowed' }}>
-          Synchroniseren (binnenkort)
-        </button>
-      </div>
+        {tfConfigured ? (
+          <SyncButton />
+        ) : (
+          <div style={{ fontSize: 12, color: UI.danger, marginTop: 4 }}>
+            ✗ <code style={code}>TICKETFLOW_SUPABASE_URL</code> en <code style={code}>TICKETFLOW_SUPABASE_SERVICE_KEY</code> ontbreken in Vercel env vars.
+          </div>
+        )}
+      </Card>
 
-      <div style={{ background: UI.card, border: `1px solid ${UI.borderSoft}`, borderRadius: 12, padding: 22 }}>
-        <h2 style={{ fontSize: 16, fontWeight: 800, margin: '0 0 12px' }}>📤 Export</h2>
-        <p style={{ fontSize: 13, color: UI.textMuted, marginBottom: 12 }}>
-          (Nog te implementeren) Exporteer transacties naar Excel of CSV voor je boekhouder.
+      <Card title="📊 Rapporten">
+        <p style={{ fontSize: 13, color: UI.textMuted }}>
+          Balance Sheet, Profit &amp; Loss en Cash Flow rapporten staan op de Rapporten-pagina, downloadbaar als PDF.
         </p>
-        <button disabled style={{ background: UI.cardSoft, color: UI.textFaint, border: `1px solid ${UI.border}`, padding: '8px 16px', borderRadius: 8, fontSize: 13, cursor: 'not-allowed' }}>
-          Excel export (binnenkort)
-        </button>
-      </div>
+      </Card>
     </Shell>
+  )
+}
+
+function Card({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div style={{ background: UI.card, border: `1px solid ${UI.borderSoft}`, borderRadius: 12, padding: 22, marginBottom: 14 }}>
+      <h2 style={{ fontSize: 15, fontWeight: 800, margin: '0 0 12px' }}>{title}</h2>
+      <div style={{ fontSize: 13, color: UI.text }}>{children}</div>
+    </div>
   )
 }
 

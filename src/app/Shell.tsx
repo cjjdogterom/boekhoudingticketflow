@@ -5,6 +5,7 @@ const NAV = [
   { href: '/dashboard',     label: '📊 Dashboard' },
   { href: '/transacties',   label: '💸 Transacties' },
   { href: '/abonnementen',  label: '🔁 Abonnementen' },
+  { href: '/rapporten',     label: '📈 Rapporten' },
   { href: '/categorieen',   label: '📁 Categorieën' },
   { href: '/instellingen',  label: '⚙️ Instellingen' },
 ]
