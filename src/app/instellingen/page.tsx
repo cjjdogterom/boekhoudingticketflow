@@ -32,15 +32,18 @@ export default async function SettingsPage() {
       </Card>
 
       <Card title="📥 TicketFlow synchronisatie">
-        <p style={{ fontSize: 13, color: UI.textMuted, marginBottom: 10 }}>
-          Importeert <strong>facturen</strong> die TicketFlow naar organisatoren stuurt als
-          <strong> jouw omzet</strong> (categorie &ldquo;Omzet servicekosten&rdquo;). Open facturen worden
-          gemarkeerd als &ldquo;te beoordelen&rdquo; tot je ze als ontvangen markeert.
-          Uitbetalingen aan organisatoren zijn doorlopende posten en worden niet geïmporteerd —
-          de €0,85 per ticket service fee zit al in de facturen.
+        <p style={{ fontSize: 13, color: UI.textMuted, marginBottom: 8 }}>
+          Importeert per organisator geaggregeerd, op moment van ticket-aankoop:
         </p>
+        <ul style={{ fontSize: 13, color: UI.text, paddingLeft: 22, lineHeight: 1.8, marginBottom: 10 }}>
+          <li><strong>+ €0,85 per verkocht ticket</strong> → Omzet servicekosten</li>
+          <li><strong>− €0,32 per verkocht ticket</strong> → Bankkosten (Mollie)</li>
+          <li><strong>+ €0,50 per terugbetaalde ticket</strong> → Omzet servicekosten</li>
+          <li><strong>Facturen</strong> (maatwerksites + refund-facturen) → Omzet overig</li>
+          <li><strong>Mollie saldo + verplichting aan organisatoren</strong> → balans-snapshot</li>
+        </ul>
         <p style={{ fontSize: 12, color: UI.textFaint, marginBottom: 12 }}>
-          Account: <code style={code}>dogteromc03@gmail.com</code> · Duplicaten worden overgeslagen
+          Account: <code style={code}>dogteromc03@gmail.com</code> · Idempotent (dupliacten overgeslagen)
         </p>
         {tfConfigured ? (
           <SyncButton />

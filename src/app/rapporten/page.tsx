@@ -56,11 +56,12 @@ export default async function ReportsPage({
       {/* ── Balance Sheet ── */}
       <ReportCard title="📊 Balans per 31-12" pdfHref={`/api/reports/pdf?type=bs&year=${yearNum}`}>
         <ReportSection title="Activa">
-          <Line label="Liquide middelen (kas/bank)" amount={bs.cash} positive />
+          <Line label="Saldo Mollie account" amount={bs.mollieBalance} positive />
           {bs.vatReceivable > 0 && <Line label="BTW te ontvangen" amount={bs.vatReceivable} positive />}
           <Total label="Totaal activa" amount={bs.totalAssets} positive bold />
         </ReportSection>
         <ReportSection title="Passiva &amp; Eigen Vermogen">
+          <Line label="Verplichting aan organisatoren" amount={bs.payableToOrgs} />
           {bs.vatPayable > 0 && <Line label="BTW af te dragen" amount={bs.vatPayable} />}
           <Line label="Eigen vermogen" amount={bs.equity} positive={bs.equity >= 0} />
           <Total label="Totaal passiva" amount={bs.totalLiabilitiesEquity} bold />

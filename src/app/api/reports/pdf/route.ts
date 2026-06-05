@@ -40,12 +40,13 @@ export async function GET(req: NextRequest) {
     body = `
       <h2>Activa</h2>
       <table>
-        <tr><td>Liquide middelen</td><td class="num">${fmt(bs.cash)}</td></tr>
+        <tr><td>Saldo Mollie account</td><td class="num">${fmt(bs.mollieBalance)}</td></tr>
         ${bs.vatReceivable > 0 ? `<tr><td>BTW te ontvangen</td><td class="num">${fmt(bs.vatReceivable)}</td></tr>` : ''}
         <tr class="total"><td>Totaal activa</td><td class="num">${fmt(bs.totalAssets)}</td></tr>
       </table>
       <h2>Passiva &amp; Eigen Vermogen</h2>
       <table>
+        <tr><td>Verplichting aan organisatoren</td><td class="num">${fmt(bs.payableToOrgs)}</td></tr>
         ${bs.vatPayable > 0 ? `<tr><td>BTW af te dragen</td><td class="num">${fmt(bs.vatPayable)}</td></tr>` : ''}
         <tr><td>Eigen vermogen</td><td class="num">${fmt(bs.equity)}</td></tr>
         <tr class="total"><td>Totaal passiva</td><td class="num">${fmt(bs.totalLiabilitiesEquity)}</td></tr>

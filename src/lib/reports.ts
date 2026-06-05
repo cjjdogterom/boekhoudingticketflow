@@ -55,15 +55,16 @@ export async function buildProfitLoss(period: ReportPeriod): Promise<ProfitLossR
   }
 }
 
-// Balance Sheet (vereenvoudigd, single-entry boekhouding)
-// Activa = Kasstand (cumulatieve inkomsten − uitgaven tot einde periode)
-// Passiva = Eigen vermogen (begin + winst dit boekjaar)
+// Balance Sheet
+// Activa = Mollie-saldo + BTW te ontvangen
+// Passiva = Verplichting aan organisatoren + BTW af te dragen + eigen vermogen
 export interface BalanceSheetReport {
   asOf: string
-  cash: number               // alle inkomsten - uitgaven cumulatief
-  vatReceivable: number      // BTW betaald > BTW geïnd
-  vatPayable: number         // BTW geïnd > BTW betaald
-  equity: number             // = cash - vatPayable + vatReceivable
+  mollieBalance: number       // totaal geld op Mollie account
+  vatReceivable: number       // BTW betaald > BTW geïnd
+  payableToOrgs: number       // wat we organisatoren nog schuldig zijn
+  vatPayable: number          // BTW geïnd > BTW betaald
+  equity: number              // = activa − vreemd vermogen
   totalAssets: number
   totalLiabilitiesEquity: number
 }
@@ -72,18 +73,29 @@ export async function buildBalanceSheet(asOf: string): Promise<BalanceSheetRepor
   const transactions = await selectAll<Transaction>(
     'select * from transactions where date <= ?', [asOf], TX_BOOL_FIELDS,
   )
-  const cash = transactions.reduce((s, t) => s + (t.type === 'income' ? t.amount_cents : -t.amount_cents), 0)
+
+  // Mollie saldo + verplichting uit laatste snapshot van payable_snapshot
+  const { selectOne } = await import('./db')
+  const snap = await selectOne<{ total_cents: number; mollie_balance: number }>(
+    'select total_cents, mollie_balance from payable_snapshot order by snapshot_at desc limit 1',
+  )
+  const mollieBalance = snap?.mollie_balance ?? 0
+  const payableToOrgs = snap?.total_cents ?? 0
+
+  // BTW berekening uit alle transacties (boekhouding tot asOf)
   const vatCollected = transactions.filter(t => t.type === 'income').reduce((s, t) => s + Math.round((t.amount_cents * t.vat_rate) / (100 + t.vat_rate)), 0)
   const vatPaid = transactions.filter(t => t.type === 'expense').reduce((s, t) => s + Math.round((t.amount_cents * t.vat_rate) / (100 + t.vat_rate)), 0)
-  const vatNet = vatCollected - vatPaid   // positive = owed to tax office
+  const vatNet = vatCollected - vatPaid
   const vatPayable = Math.max(0, vatNet)
   const vatReceivable = Math.max(0, -vatNet)
 
-  const equity = cash - vatPayable + vatReceivable
+  const totalAssets = mollieBalance + vatReceivable
+  const equity = totalAssets - payableToOrgs - vatPayable
+
   return {
-    asOf, cash, vatReceivable, vatPayable, equity,
-    totalAssets: cash + vatReceivable,
-    totalLiabilitiesEquity: vatPayable + equity,
+    asOf, mollieBalance, vatReceivable, payableToOrgs, vatPayable, equity,
+    totalAssets,
+    totalLiabilitiesEquity: payableToOrgs + vatPayable + equity,
   }
 }
 
