@@ -41,62 +41,9 @@ export async function POST() {
   try {
     await ensureJournalSchema()
     const { snapshots, rates } = await buildOrgSnapshots()
-    const syncedRes = await db.execute('select external_id from ticketflow_sync')
-    const synced = new Set(syncedRes.rows.map(r => (r as unknown as { external_id: string }).external_id))
 
-    const today = new Date().toISOString().slice(0, 10)
-    let feesAdded = 0
-    let refundAdded = 0
-    let invoicesAdded = 0
+    // Idempotentie loopt volledig via journal external_id (createJournalEntryIfMissing).
     let journalAdded = 0
-
-    function previousCount(prefix: string): number {
-      return [...synced]
-        .filter(k => k.startsWith(prefix))
-        .map(k => parseInt(k.split('-').pop() || '0', 10))
-        .reduce((max, n) => Math.max(max, n), 0)
-    }
-
-    for (const s of snapshots) {
-      // ── Service fees per verkochte ticket (omzet) ──────────────────────
-      if (s.tickets_sold > 0) {
-        const key = `fees-${s.org_id}-${s.tickets_sold}`
-        if (!synced.has(key)) {
-          const delta = s.tickets_sold - previousCount(`fees-${s.org_id}-`)
-          if (delta > 0) {
-            const txId = newId()
-            await db.execute({
-              sql: `insert into transactions (id, date, description, amount_cents, type, vat_rate, category_id, source, external_id, ai_categorised, needs_review, notes)
-                    values (?, ?, ?, ?, 'income', 21, 'cat-omzet-fees', 'ticketflow', ?, 0, 0, ?)`,
-              args: [txId, today, `Servicekosten ${s.org_name} — ${delta} ticket${delta === 1 ? '' : 's'}`,
-                delta * rates.serviceFee, key,
-                `Org: ${s.org_name} · ${delta} tickets × €${(rates.serviceFee / 100).toFixed(2)} servicekosten`],
-            })
-            await db.execute({ sql: `insert into ticketflow_sync (external_id, kind, transaction_id) values (?, 'service-fee', ?)`, args: [key, txId] })
-            feesAdded++
-          }
-        }
-      }
-
-      // ── Refund fees (omzet) ────────────────────────────────────────────
-      if (s.refunds > 0) {
-        const key = `refund-${s.org_id}-${s.refunds}`
-        if (!synced.has(key)) {
-          const delta = s.refunds - previousCount(`refund-${s.org_id}-`)
-          if (delta > 0) {
-            const txId = newId()
-            await db.execute({
-              sql: `insert into transactions (id, date, description, amount_cents, type, vat_rate, category_id, source, external_id, ai_categorised, needs_review, notes)
-                    values (?, ?, ?, ?, 'income', 21, 'cat-omzet-fees', 'ticketflow', ?, 0, 0, ?)`,
-              args: [txId, today, `Refund fees ${s.org_name} — ${delta} terugbetaling${delta === 1 ? '' : 'en'}`,
-                delta * 50, key, `Org: ${s.org_name} · ${delta} refunds × €0,50`],
-            })
-            await db.execute({ sql: `insert into ticketflow_sync (external_id, kind, transaction_id) values (?, 'refund-fee', ?)`, args: [key, txId] })
-            refundAdded++
-          }
-        }
-      }
-    }
 
     // ── Journaalposten: echte TicketFlow feiten, per item idempotent ──────
     // Ticketbetaling: Dr Mollie, Cr verplichting aan organisator.
@@ -144,9 +91,10 @@ export async function POST() {
           description: `Mollie transactiekosten order ${ticket.mollie_payment_id.slice(0, 8)}`,
           source: 'ticketflow',
           external_id: `mollie-cost-${ticket.mollie_payment_id}`,
-          notes: `Mollie kosten worden niet extra als TicketFlow fee gerekend; ze verlagen Mollie saldo en organisatorverplichting.`,
+          notes: `€${(rates.mollieCost / 100).toFixed(2)} per Mollie-order. TicketFlow draagt deze kosten zelf (organisator krijgt volledige ticketprijs minus servicefee uitbetaald).`,
           lines: [
-            { account_id: ACCOUNTS.organizerPayable, debit_cents: rates.mollieCost, description: 'Kosten verrekend met organisator' },
+            // TicketFlow draagt de Mollie-kosten zelf → eigen uitgave, niet ten laste van de organisator.
+            { account_id: ACCOUNTS.bankCosts, debit_cents: rates.mollieCost, description: 'Mollie transactiekosten (TicketFlow draagt)' },
             { account_id: ACCOUNTS.mollie, credit_cents: rates.mollieCost, description: 'Door Mollie ingehouden' },
           ],
         })) journalAdded++
@@ -238,29 +186,6 @@ export async function POST() {
           ],
         })) journalAdded++
       }
-
-      const isPaid = inv.status === 'paid'
-      const extId = isPaid ? `invoice-paid-${inv.id}` : null   // open facturen: geen tx maken
-      if (!extId) continue
-      if (synced.has(extId)) continue
-      if (amount <= 0) continue
-
-      const date = inv.created_at.slice(0, 10)
-      const noteParts = [
-        inv.period_label ? `Periode: ${inv.period_label}` : null,
-        inv.org_name ? `Klant: ${inv.org_name}` : null,
-        inv.notes,
-      ].filter(Boolean)
-
-      const txId = newId()
-      await db.execute({
-        sql: `insert into transactions (id, date, description, amount_cents, type, vat_rate, category_id, source, external_id, ai_categorised, needs_review, notes)
-              values (?, ?, ?, ?, 'income', 21, 'cat-omzet-overig', 'ticketflow', ?, 0, 0, ?)`,
-        args: [txId, date, `Factuur ${inv.invoice_number || inv.id.slice(0, 8)} — ✓ Betaald`,
-          amount, extId, noteParts.join(' · ')],
-      })
-      await db.execute({ sql: `insert into ticketflow_sync (external_id, kind, transaction_id) values (?, 'invoice-paid', ?)`, args: [extId, txId] })
-      invoicesAdded++
     }
 
     // ── Balans-snapshot ────────────────────────────────────────────────────
@@ -283,11 +208,11 @@ export async function POST() {
 
     return NextResponse.json({
       ok: true,
-      feesAdded, refundAdded, invoicesAdded, journalAdded,
+      journalAdded,
       orgsProcessed: snapshots.length,
       totalPayable, mollieBalance, totalDebtors,
       rates,
-      message: `${feesAdded} servicekosten + ${refundAdded} refunds + ${invoicesAdded} betaalde facturen + ${journalAdded} journaalposten voor ${snapshots.length} organisator(en). Mollie saldo: €${(mollieBalance / 100).toFixed(2)} · Debiteuren: €${(totalDebtors / 100).toFixed(2)} · Verplichting aan orgs: €${(totalPayable / 100).toFixed(2)}`,
+      message: `${journalAdded} nieuwe journaalposten voor ${snapshots.length} organisator(en). Mollie saldo: €${(mollieBalance / 100).toFixed(2)} · Debiteuren: €${(totalDebtors / 100).toFixed(2)} · Verplichting aan orgs: €${(totalPayable / 100).toFixed(2)}`,
     })
   } catch (err) {
     console.error('ticketflow sync failed', err)

@@ -58,6 +58,10 @@ export async function fetchAllPaidTickets(): Promise<TFTicketRow[]> {
       events!inner ( org_id, organizations!inner ( name ) )
     `)
     .eq('status', 'paid')
+    // TESTTICKETS UITSLUITEN: echte Mollie-betalingen hebben een
+    // mollie_payment_id. Test/handmatige tickets hebben dit niet en
+    // tellen dus niet mee in de boekhouding.
+    .not('mollie_payment_id', 'is', null)
     .order('created_at', { ascending: true })
 
   if (error) throw new Error(`tickets fetch: ${error.message}`)
