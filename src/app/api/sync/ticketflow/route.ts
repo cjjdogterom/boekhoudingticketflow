@@ -102,6 +102,8 @@ export async function POST() {
 
       if (ticket.refunded_at && ticket.price_paid > 0) {
         const refundDate = ticket.refunded_at.slice(0, 10)
+
+        // Klant krijgt volledige ticketprijs terug via Mollie.
         if (await createJournalEntryIfMissing({
           date: refundDate,
           description: `Refund ticket ${ticket.org_name}`,
@@ -114,6 +116,10 @@ export async function POST() {
           ],
         })) journalAdded++
 
+        // Servicefee (€0,85) blijft verschuldigd door organisator ook na refund.
+        // Die was al geboekt bij ticketverkoop — geen extra entry nodig.
+
+        // Refundfee (€0,50): organisator betaalt aan TicketFlow.
         if (await createJournalEntryIfMissing({
           date: refundDate,
           description: `TicketFlow refundfee ${ticket.org_name}`,
@@ -123,6 +129,19 @@ export async function POST() {
           lines: [
             { account_id: ACCOUNTS.organizerPayable, debit_cents: REFUND_FEE_CENTS, description: `Ingehouden op saldo ${ticket.org_name}` },
             ...revenueLines(REFUND_FEE_CENTS, ACCOUNTS.revenueRefunds, 'TicketFlow refundkosten'),
+          ],
+        })) journalAdded++
+
+        // Mollie verwerkingskosten voor de refund (zelfde tarief als originele betaling).
+        if (rates.mollieCost > 0 && await createJournalEntryIfMissing({
+          date: refundDate,
+          description: `Mollie refundkosten ticket ${ticket.id.slice(0, 8)}`,
+          source: 'ticketflow',
+          external_id: `mollie-refund-cost-${ticket.id}`,
+          notes: `${formatCents(rates.mollieCost)} Mollie-verwerkingskosten voor refund. TicketFlow draagt deze kosten zelf.`,
+          lines: [
+            { account_id: ACCOUNTS.bankCosts, debit_cents: rates.mollieCost, description: 'Mollie refundverwerkingskosten' },
+            { account_id: ACCOUNTS.mollie, credit_cents: rates.mollieCost, description: 'Door Mollie ingehouden bij refund' },
           ],
         })) journalAdded++
       }

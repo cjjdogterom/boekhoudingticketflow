@@ -230,6 +230,47 @@ export async function fetchJournalOverview(limit = 500): Promise<Array<JournalEn
   })
 }
 
+export async function fetchJournalEntriesByAccount(
+  accountId: string,
+  from?: string,
+  to?: string,
+) {
+  await ensureJournalSchema()
+  const conditions: string[] = ['jl.account_id = ?']
+  const args: Array<string | number> = [accountId]
+  if (from) { conditions.push('je.date >= ?'); args.push(from) }
+  if (to) { conditions.push('je.date <= ?'); args.push(to) }
+
+  const entryIds = await selectAll<{ id: string }>(
+    `select distinct je.id from journal_entries je
+     join journal_lines jl on jl.entry_id = je.id
+     where ${conditions.join(' and ')}
+     order by je.date desc, je.created_at desc limit 500`,
+    args,
+  )
+  if (entryIds.length === 0) return []
+  const ids = entryIds.map(e => e.id)
+  const placeholders = ids.map(() => '?').join(',')
+  const entries = await selectAll<JournalEntry>(
+    `select * from journal_entries where id in (${placeholders}) order by date desc, created_at desc`,
+    ids,
+  )
+  const lines = await selectAll<JournalLine & { account_code: string; account_name: string; account_type: LedgerAccount['type'] }>(
+    `select jl.*, la.code as account_code, la.name as account_name, la.type as account_type
+     from journal_lines jl
+     join ledger_accounts la on la.id = jl.account_id
+     where jl.entry_id in (${placeholders})
+     order by jl.sort_order asc`,
+    ids,
+  )
+  return entries.map(entry => {
+    const entryLines = lines.filter(line => line.entry_id === entry.id)
+    const debit = entryLines.reduce((sum, line) => sum + Number(line.debit_cents), 0)
+    const credit = entryLines.reduce((sum, line) => sum + Number(line.credit_cents), 0)
+    return { ...entry, lines: entryLines, debit_total: debit, credit_total: credit, balanced: debit === credit }
+  })
+}
+
 export async function fetchLedgerAccounts(): Promise<LedgerAccount[]> {
   await ensureJournalSchema()
   return selectAll<LedgerAccount>('select * from ledger_accounts order by code')

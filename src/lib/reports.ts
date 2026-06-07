@@ -15,6 +15,7 @@ export interface ProfitLossLine {
   categoryName: string
   amount: number
   accountCode?: string
+  accountId?: string
 }
 
 export interface ProfitLossReport {
@@ -145,6 +146,7 @@ export async function buildProfitLoss(period: ReportPeriod): Promise<ProfitLossR
   const revenue = balances
     .filter(account => account.type === 'revenue' && account.normalBalance !== 0)
     .map(account => ({
+      accountId: account.id,
       accountCode: account.code,
       categoryName: account.name,
       amount: account.normalBalance,
@@ -154,6 +156,7 @@ export async function buildProfitLoss(period: ReportPeriod): Promise<ProfitLossR
   const expenses = balances
     .filter(account => account.type === 'expense' && account.normalBalance !== 0)
     .map(account => ({
+      accountId: account.id,
       accountCode: account.code,
       categoryName: account.name,
       amount: account.normalBalance,
